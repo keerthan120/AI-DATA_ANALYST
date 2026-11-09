@@ -62,6 +62,7 @@ class ChatRequest(BaseModel):
     session_id: str = "default-session"
     message: str
     table_names: list[str] = []
+    user_id: Optional[int] = None
     api_key: Optional[str] = None
     model: Optional[str] = None
     conversation_history: list[ChatMessage] = []
@@ -69,7 +70,7 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     session_id: str
     query_type: str = Field(
-        description="Type of analysis: e.g., aggregation, trend, anomaly, ranking, comparison, general"
+        description="Type of analysis: e.g., aggregation, trend, anomaly, ranking, comparison, general, greeting, overview, forecast, data_quality, dashboard"
     )
     natural_language_answer: str
     reasoning_steps: list[str] = []
@@ -96,12 +97,14 @@ class ConversationSummary(BaseModel):
     created_at: str
     updated_at: str
     message_count: int = 0
+    active_tables: list[str] = []
 
 class ConversationDetail(BaseModel):
     id: str
     title: str
     created_at: str
     updated_at: str
+    active_tables: list[str] = []
     messages: list[StoredMessage] = []
 
 class AnomalyDetectRequest(BaseModel):
@@ -110,3 +113,13 @@ class AnomalyDetectRequest(BaseModel):
     method: Literal["iqr", "zscore", "isolation_forest", "auto"] = "auto"
     threshold: float = 2.5
 
+class DataQualityReport(BaseModel):
+    table_name: str
+    total_rows: int
+    total_columns: int
+    completeness_score: float
+    duplicate_rows: int
+    total_missing_cells: int
+    column_null_counts: dict[str, int]
+    column_types: dict[str, str]
+    quality_grade: str

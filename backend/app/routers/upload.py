@@ -1,16 +1,26 @@
 import shutil
+import json
 from pathlib import Path
-from fastapi import APIRouter, UploadFile, File, HTTPException, status
+from typing import Optional
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status, Depends
+from sqlalchemy.orm import Session
 from app.config import settings
 from app.engine.duckdb_engine import db_engine
+from app.db.session import get_db
+from app.db.models import Conversation
 from app.models.schemas import UploadResponse, TableSchema
 
 router = APIRouter(prefix="/api", tags=["Data Ingestion & Schemas"])
 
 @router.post("/upload", response_model=UploadResponse)
-async def upload_csv_files(files: list[UploadFile] = File(...)):
+async def upload_csv_files(
+    files: list[UploadFile] = File(...),
+    conversation_id: Optional[str] = Form(None),
+    db: Session = Depends(get_db)
+):
     """
-    Accepts one or more CSV files, registers them into DuckDB, and returns schemas and statistics.
+    Accepts one or more CSV files, registers them into DuckDB, associates them with the conversation,
+    and returns schemas and statistics.
     """
     if not files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files uploaded.")
@@ -24,7 +34,6 @@ async def upload_csv_files(files: list[UploadFile] = File(...)):
                 detail=f"Invalid file format: '{file.filename}'. Only CSV files are supported."
             )
 
-        # Clean file name and destination path
         safe_name = Path(file.filename).name
         dest_path = settings.UPLOAD_DIR / safe_name
 
@@ -44,6 +53,15 @@ async def upload_csv_files(files: list[UploadFile] = File(...)):
                 detail=f"Error parsing and registering CSV '{safe_name}': {str(e)}"
             )
 
+    # Associate tables with conversation if provided
+    if conversation_id:
+        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if conv:
+            existing = conv.get_tables_list()
+            new_tables = list(dict.fromkeys(existing + [t.table_name for t in registered_tables]))
+            conv.set_tables_list(new_tables)
+            db.commit()
+
     return UploadResponse(
         success=True,
         message=f"Successfully uploaded and profiled {len(registered_tables)} CSV table(s).",
@@ -51,21 +69,30 @@ async def upload_csv_files(files: list[UploadFile] = File(...)):
     )
 
 @router.get("/tables", response_model=list[TableSchema])
-async def list_tables():
-    """Returns profiles and preview rows for all registered tables."""
-    return db_engine.get_registered_tables_info()
+async def list_tables(conversation_id: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Returns profiles and preview rows for registered tables.
+    If conversation_id is provided, filters tables scoped to that conversation.
+    """
+    all_tables = db_engine.get_registered_tables_info()
+    if conversation_id:
+        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+        if conv:
+            allowed = set(conv.get_tables_list())
+            return [t for t in all_tables if t.table_name in allowed]
+    return all_tables
 
 @router.post("/load-samples", response_model=UploadResponse)
 async def load_sample_datasets():
     """
-    Registers the included production sample datasets (sales_transactions, customers, products)
-    into DuckDB virtual tables for immediate demonstration and verification.
+    Registers the included sample datasets into DuckDB virtual tables.
     """
     candidates = [
         Path("sample_data"),
         Path(__file__).resolve().parent.parent.parent.parent / "sample_data",
         Path(__file__).resolve().parent.parent.parent / "sample_data",
-        settings.BASE_DIR.parent / "sample_data"
+        settings.BASE_DIR.parent / "sample_data",
+        settings.UPLOAD_DIR
     ]
     
     sample_dir = None
@@ -94,8 +121,6 @@ async def load_sample_datasets():
 
     return UploadResponse(
         success=True,
-        message=f"Loaded and profiled {len(registered_tables)} sample dataset(s): sales_transactions, customers, products.",
+        message=f"Loaded and profiled {len(registered_tables)} sample dataset(s).",
         tables=registered_tables
     )
-
-

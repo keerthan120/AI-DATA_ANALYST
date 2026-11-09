@@ -7,14 +7,18 @@ from app.agents.sql_agent import SQLAgent
 from app.agents.viz_agent import VisualizationAgent
 from app.agents.anomaly_agent import AnomalyDetectionAgent
 from app.agents.insight_agent import InsightAgent
+from app.agents.forecasting_agent import ForecastingAgent
+from app.agents.quality_agent import DataQualityAgent
+from app.agents.cache_manager import query_cache
 from app.guardrails.input_guard import InputGuardrail
 from app.engine.duckdb_engine import db_engine
-from app.models.schemas import ChartType
+from app.models.schemas import ChartType, ChartConfig
 
 # 1. Guardrail & Security Node
 def input_guardrail_node(state: AgentState) -> dict[str, Any]:
     start_time = time.time()
     query = state.get("message", "")
+    tables = state.get("table_names", [])
 
     is_safe, violations = InputGuardrail.validate_user_query(query)
     if not is_safe:
@@ -47,16 +51,23 @@ def supervisor_node(state: AgentState) -> dict[str, Any]:
     query = state.get("message", "").strip().lower()
     steps = state.get("reasoning_steps", [])
     
-    # Check for dataset overview or explanation request
     overview_keywords = ["overview", "explain", "understand", "profile", "describe", "summary", "summarize", "about", "what is this data", "structure"]
-    greetings = {"hi", "hello", "hey", "hola", "help", "who are you", "what can you do"}
+    greetings = {"hi", "hello", "hey", "hola", "help", "who are you", "what can you do", "good morning", "good evening"}
+    forecast_keywords = ["forecast", "predict", "projection", "predictive", "next months", "future trend"]
+    quality_keywords = ["quality", "data quality", "missing", "hygiene", "audit", "cleanliness", "duplicates", "null count"]
 
-    if any(k in query for k in overview_keywords) or query.startswith("explain") or query.startswith("overview"):
-        intent = "overview"
-        steps.append("Supervisor routed query to Dataset Profiling & Explanation workflow.")
-    elif query in greetings:
+    if query in greetings or any(query.startswith(g) for g in ["hi", "hello", "hey", "hola", "help", "who are you", "what can you do", "good morning", "good evening"]):
         intent = "greeting"
         steps.append("Supervisor recognized conversational greeting; providing capabilities guide.")
+    elif any(k in query for k in forecast_keywords):
+        intent = "forecast"
+        steps.append("Supervisor routed query to Time-Series Forecasting workflow.")
+    elif any(k in query for k in quality_keywords):
+        intent = "quality"
+        steps.append("Supervisor routed query to Data Quality & Hygiene Audit workflow.")
+    elif any(k in query for k in overview_keywords) or query.startswith("explain") or query.startswith("overview"):
+        intent = "overview"
+        steps.append("Supervisor routed query to Dataset Profiling & Explanation workflow.")
     elif any(k in query for k in ["anomaly", "anomalies", "outlier", "unusual", "irregular"]):
         intent = "anomaly"
         steps.append("Supervisor routed query to Statistical Anomaly Detection workflow.")
@@ -67,6 +78,40 @@ def supervisor_node(state: AgentState) -> dict[str, Any]:
     return {
         "intent": intent,
         "reasoning_steps": steps
+    }
+
+# 3.4 Greeting Node (Polite, helpful introduction)
+def greeting_node(state: AgentState) -> dict[str, Any]:
+    start_time = state.get("start_time", time.time())
+    steps = state.get("reasoning_steps", [])
+    tables = state.get("selected_tables", [])
+    table_list = ", ".join(tables) if tables else "none"
+
+    greeting_text = (
+        f"**Hello! I am your AI Data Analyst.**\n\n"
+        f"I can help you understand your data, uncover key business drivers, and build visualizations.\n\n"
+        f"**Active Datasets:** {len(tables)} table(s) registered ({table_list}).\n\n"
+        f"**What I can do for you:**\n"
+        f"1. **Exploratory Data Analysis:** Ask questions in plain English to generate deterministic DuckDB SQL and Pandas code.\n"
+        f"2. **Interactive Visualizations:** Generate Bar, Line, Pie, Area, and Scatter charts automatically.\n"
+        f"3. **Statistical Anomaly Detection:** Detect numeric outliers using IQR bounds and Z-scores (|Z| > 2.5) with full explanations.\n"
+        f"4. **Time-Series Forecasting:** Project future periods with regression trend modeling.\n"
+        f"5. **Data Quality Checks:** Audit missing values, completeness scores, and duplicates.\n\n"
+        f"Upload a CSV file or ask a question to begin!"
+    )
+    steps.append("Prepared greeting with capabilities guide.")
+    elapsed_ms = round((time.time() - start_time) * 1000, 2)
+
+    return {
+        "natural_language_answer": greeting_text,
+        "insights": [
+            f"{len(tables)} dataset(s) loaded in in-memory DuckDB.",
+            "Ask questions or upload CSVs to generate SQL, interactive visualizations, and anomaly reports."
+        ],
+        "chart": None,
+        "data_results": [],
+        "reasoning_steps": steps,
+        "execution_time_ms": elapsed_ms
     }
 
 # 3.5 Overview Node (Explains any uploaded CSV immediately)
@@ -94,35 +139,50 @@ def overview_node(state: AgentState) -> dict[str, Any]:
         "execution_time_ms": elapsed_ms
     }
 
-# 3.6 Greeting Node
-def greeting_node(state: AgentState) -> dict[str, Any]:
+# 3.6 Forecast Node
+def forecast_node(state: AgentState) -> dict[str, Any]:
     start_time = state.get("start_time", time.time())
     steps = state.get("reasoning_steps", [])
     tables = state.get("selected_tables", [])
-    table_list = ", ".join(tables) if tables else "none"
+    target_table = tables[0] if tables else ""
 
-    greeting_text = (
-        f"**AI Data Analyst Engine Initialized.** Active tables: **{len(tables)}** ({table_list}).\n\n"
-        f"Ready to process natural language questions, generate deterministic DuckDB SQL and Pandas code, "
-        f"produce interactive charts, and detect statistical outliers.\n\n"
-        f"**Suggested queries:**\n"
-        f"- *'Explain this dataset and its columns'*\n"
-        f"- *'Which category generated the highest value?'*\n"
-        f"- *'Show trends over time'*\n"
-        f"- *'Detect anomalies in the dataset'*\n"
-        f"- *'Generate SQL and pandas code for this analysis'*"
-    )
-    steps.append("Prepared greeting with active dataset context and suggested prompts.")
+    steps.append(f"Fitting linear trend model on temporal series for table '{target_table}'...")
+    results, chart, explanation, insights = ForecastingAgent.forecast_series(target_table, periods_ahead=4)
+    steps.append("Projected future periods with statistical confidence trends.")
+
     elapsed_ms = round((time.time() - start_time) * 1000, 2)
-
     return {
-        "natural_language_answer": greeting_text,
-        "insights": [
-            f"{len(tables)} dataset(s) loaded in in-memory DuckDB.",
-            "Type questions in natural language to run queries, render charts, and discover outliers."
-        ],
+        "natural_language_answer": explanation,
+        "insights": insights,
+        "data_results": results,
+        "total_data_rows": len(results),
+        "chart": chart,
+        "sql_query": f"-- Time Series Trend Forecast\nSELECT strftime('%Y-%m', date_col) AS period, SUM(metric_col) FROM \"{target_table}\" GROUP BY period;",
+        "python_code": f"import pandas as pd\nimport numpy as np\n# Linear regression forecast\n# See ForecastingAgent for implementation",
+        "reasoning_steps": steps,
+        "execution_time_ms": elapsed_ms
+    }
+
+# 3.7 Data Quality Node
+def quality_node(state: AgentState) -> dict[str, Any]:
+    start_time = state.get("start_time", time.time())
+    steps = state.get("reasoning_steps", [])
+    tables = state.get("selected_tables", [])
+    target_table = tables[0] if tables else ""
+
+    steps.append(f"Running data quality and hygiene checks on '{target_table}'...")
+    report, explanation, insights = DataQualityAgent.audit_table(target_table)
+    steps.append(f"Completed quality audit: Grade {report.quality_grade}, {report.completeness_score}% completeness.")
+
+    elapsed_ms = round((time.time() - start_time) * 1000, 2)
+    return {
+        "natural_language_answer": explanation,
+        "insights": insights,
+        "data_results": [report.model_dump()],
+        "total_data_rows": 1,
         "chart": None,
-        "data_results": [],
+        "sql_query": f"SELECT COUNT(*) as total_rows, COUNT(DISTINCT *) as unique_rows FROM \"{target_table}\";",
+        "python_code": f"import pandas as pd\ndf = pd.read_csv('{target_table}.csv')\nprint(df.isnull().sum())\nprint(df.duplicated().sum())",
         "reasoning_steps": steps,
         "execution_time_ms": elapsed_ms
     }
@@ -231,6 +291,10 @@ def route_by_intent(state: AgentState) -> str:
         return "overview"
     if intent == "greeting":
         return "greeting"
+    if intent == "forecast":
+        return "forecast"
+    if intent == "quality":
+        return "quality"
     if intent == "anomaly":
         return "anomaly"
     return "sql"
@@ -244,6 +308,8 @@ def build_data_analyst_graph():
     builder.add_node("supervisor", supervisor_node)
     builder.add_node("overview", overview_node)
     builder.add_node("greeting", greeting_node)
+    builder.add_node("forecast", forecast_node)
+    builder.add_node("quality", quality_node)
     builder.add_node("sql", sql_node)
     builder.add_node("anomaly", anomaly_node)
     builder.add_node("viz", viz_node)
@@ -255,15 +321,20 @@ def build_data_analyst_graph():
     builder.add_conditional_edges("supervisor", route_by_intent, {
         "overview": "overview",
         "greeting": "greeting",
+        "forecast": "forecast",
+        "quality": "quality",
         "anomaly": "anomaly",
         "sql": "sql"
     })
     
     # Overview flow: overview -> END
     builder.add_edge("overview", END)
-
     # Greeting flow: greeting -> END
     builder.add_edge("greeting", END)
+    # Forecast flow: forecast -> END
+    builder.add_edge("forecast", END)
+    # Quality flow: quality -> END
+    builder.add_edge("quality", END)
 
     # Anomaly flow: anomaly -> viz -> synthesizer -> END
     builder.add_edge("anomaly", "viz")

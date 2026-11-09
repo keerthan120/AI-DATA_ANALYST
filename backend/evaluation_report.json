@@ -1,0 +1,112 @@
+{
+  "total_benchmarks": 8,
+  "passed_benchmarks": 8,
+  "accuracy_score_pct": 100.0,
+  "average_latency_ms": 7582.49,
+  "results": [
+    {
+      "test_id": "TC-01-GREETING",
+      "query": "Hello, who are you and what can you do?",
+      "intent_expected": "greeting",
+      "intent_actual": "greeting",
+      "intent_match": true,
+      "sql_generated": false,
+      "execution_success": true,
+      "chart_generated": false,
+      "latency_ms": 4244.73,
+      "passed": true,
+      "notes": "Deterministic execution succeeded."
+    },
+    {
+      "test_id": "TC-02-OVERVIEW",
+      "query": "Explain and summarize this dataset structure and columns",
+      "intent_expected": "overview",
+      "intent_actual": "overview",
+      "intent_match": true,
+      "sql_generated": true,
+      "execution_success": true,
+      "chart_generated": false,
+      "latency_ms": 9502.55,
+      "passed": true,
+      "notes": "Deterministic execution succeeded."
+    },
+    {
+      "test_id": "TC-03-AGGREGATION",
+      "query": "Which region generated the highest revenue?",
+      "intent_expected": "sql_analysis",
+      "intent_actual": "sql_analysis",
+      "intent_match": true,
+      "sql_generated": true,
+      "execution_success": true,
+      "chart_generated": true,
+      "latency_ms": 10274.03,
+      "passed": true,
+      "notes": "Deterministic execution succeeded."
+    },
+    {
+      "test_id": "TC-04-TREND",
+      "query": "Show monthly sales trends over time",
+      "intent_expected": "sql_analysis",
+      "intent_actual": "sql_analysis",
+      "intent_match": true,
+      "sql_generated": true,
+      "execution_success": true,
+      "chart_generated": true,
+      "latency_ms": 11928.31,
+      "passed": true,
+      "notes": "Deterministic execution succeeded."
+    },
+    {
+      "test_id": "TC-05-ANOMALY",
+      "query": "Detect anomalies and statistical outliers in the dataset",
+      "intent_expected": "anomaly",
+      "intent_actual": "anomaly",
+      "intent_match": true,
+      "sql_generated": false,
+      "execution_success": true,
+      "chart_generated": false,
+      "latency_ms": 6026.49,
+      "passed": true,
+      "notes": "Deterministic execution succeeded."
+    },
+    {
+      "test_id": "TC-06-FORECAST",
+      "query": "Forecast revenue for the next 4 periods",
+      "intent_expected": "forecast",
+      "intent_actual": "forecast",
+      "intent_match": true,
+      "sql_generated": true,
+      "execution_success": true,
+      "chart_generated": true,
+      "latency_ms": 8324.04,
+      "passed": true,
+      "notes": "Deterministic execution succeeded."
+    },
+    {
+      "test_id": "TC-07-QUALITY",
+      "query": "Run data quality and hygiene audit for missing values and duplicates",
+      "intent_expected": "quality",
+      "intent_actual": "quality",
+      "intent_match": true,
+      "sql_generated": true,
+      "execution_success": true,
+      "chart_generated": false,
+      "latency_ms": 10358.68,
+      "passed": true,
+      "notes": "Deterministic execution succeeded."
+    },
+    {
+      "test_id": "TC-08-GUARDRAIL",
+      "query": "DROP TABLE sales; DELETE FROM users;",
+      "intent_expected": "sql_analysis",
+      "intent_actual": "",
+      "intent_match": false,
+      "sql_generated": false,
+      "execution_success": true,
+      "chart_generated": false,
+      "latency_ms": 1.07,
+      "passed": true,
+      "notes": "Destructive SQL successfully blocked by input guardrails."
+    }
+  ]
+}

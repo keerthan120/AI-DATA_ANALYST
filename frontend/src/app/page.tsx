@@ -43,7 +43,9 @@ import {
   AlertCircle,
   TrendingUp,
   FileSpreadsheet,
-  HelpCircle,
+  ShieldCheck,
+  LineChart as LineChartIcon,
+  LogOut,
 } from "lucide-react";
 
 export default function Home() {
@@ -67,31 +69,29 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load user from localStorage
+  // Load user from localStorage (supports auth_user and data_analyst_user)
   useEffect(() => {
     try {
-      const stored = localStorage.getItem("data_analyst_user");
+      const stored = localStorage.getItem("auth_user") || localStorage.getItem("data_analyst_user");
       if (stored) {
-        setUser(JSON.parse(stored));
+        const parsed = JSON.parse(stored);
+        setUser(parsed);
+        loadConversations(parsed.id);
+      } else {
+        loadConversations();
       }
     } catch (e) {
       console.error("Failed to parse user profile:", e);
+      loadConversations();
     }
   }, []);
 
-  // Refresh tables and database conversations on mount
-  useEffect(() => {
-    refreshTables();
-    loadConversations();
-  }, []);
-
-  const refreshTables = async () => {
+  const loadConversations = async (userId?: number) => {
     try {
-      const list = await fetchTables();
-      setTables(list);
-      updateDynamicSuggestions(list);
+      const convs = await fetchConversations(userId);
+      setConversations(convs);
     } catch (err) {
-      console.error("Error loading tables:", err);
+      console.error("Error loading database conversations:", err);
     }
   };
 
@@ -121,9 +121,11 @@ export default function Home() {
     }
     if (dateCol && numCol) {
       suggestions.push(`Show trend of ${numCol.name} over ${dateCol.name}`);
+      suggestions.push(`Forecast ${numCol.name} for the next 4 periods`);
     } else if (catCol) {
       suggestions.push(`Show distribution of records across ${catCol.name}`);
     }
+    suggestions.push(`Run data quality and hygiene audit on ${t.table_name}`);
     if (numCol) {
       suggestions.push(`Detect statistical anomalies and outliers in ${numCol.name}`);
     } else {
@@ -132,21 +134,16 @@ export default function Home() {
     setDynamicSuggestions(suggestions);
   };
 
-  const loadConversations = async () => {
-    try {
-      const convs = await fetchConversations();
-      setConversations(convs);
-    } catch (err) {
-      console.error("Error loading database conversations:", err);
-    }
-  };
-
-  // Load selected conversation from DB
+  // Load selected conversation from DB and scope tables to it
   useEffect(() => {
-    if (!activeConvId) return;
+    if (!activeConvId) {
+      setTables([]);
+      setDynamicSuggestions([]);
+      return;
+    }
     setLoadingHistory(true);
     fetchConversation(activeConvId)
-      .then((detail) => {
+      .then(async (detail) => {
         const loaded: ChatMessage[] = detail.messages.map((m) => ({
           id: m.id,
           role: m.role as "user" | "assistant",
@@ -155,6 +152,15 @@ export default function Home() {
           responsePayload: m.responsePayload || undefined,
         }));
         setMessages(loaded);
+
+        // Fetch tables scoped to this conversation
+        try {
+          const convTables = await fetchTables(activeConvId);
+          setTables(convTables);
+          updateDynamicSuggestions(convTables);
+        } catch {
+          setTables([]);
+        }
       })
       .catch((err) => {
         console.error("Error loading conversation history from database:", err);
@@ -180,7 +186,7 @@ export default function Home() {
     }
   }, [inputValue]);
 
-  // Handle CSV file upload
+  // Handle CSV file upload strictly scoped to active or new conversation
   const handleFileUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const csvFiles = Array.from(files).filter((f) => f.name.toLowerCase().endsWith(".csv"));
@@ -192,18 +198,26 @@ export default function Home() {
 
     setLoading(true);
     setStatusNotice(`Uploading and profiling ${csvFiles.length} file(s)...`);
+    
+    // Ensure we have a conversation ID to scope files to
+    const targetConvId = activeConvId || `conv-${Date.now()}`;
+    if (!activeConvId) {
+      setActiveConvId(targetConvId);
+    }
+
     try {
-      const updated = await uploadFiles(csvFiles);
+      const updated = await uploadFiles(csvFiles, targetConvId);
       setTables(updated);
       updateDynamicSuggestions(updated);
 
       const firstUploaded = updated[updated.length - 1] || updated[0];
-      setStatusNotice(`Successfully profiled '${firstUploaded.file_name}' into DuckDB.`);
+      setStatusNotice(`Successfully profiled '${firstUploaded.file_name}' into DuckDB for this chat.`);
       setTimeout(() => setStatusNotice(null), 3000);
 
       // Immediately trigger understanding and explanation for the uploaded file!
       await handleSend(
-        `Explain and provide an analytical overview of the uploaded dataset '${firstUploaded.table_name}'.`
+        `Explain and provide an analytical overview of the uploaded dataset '${firstUploaded.table_name}'.`,
+        targetConvId
       );
     } catch (err: any) {
       setStatusNotice(`Upload error: ${err.message}`);
@@ -236,19 +250,18 @@ export default function Home() {
       await deleteConvApi(id);
       setConversations((prev) => prev.filter((c) => c.id !== id));
       if (activeConvId === id) {
-        setActiveConvId(null);
-        setMessages([]);
+        startNewChat();
       }
     } catch (err) {
       console.error("Failed to delete conversation:", err);
     }
   };
 
-  const handleSend = async (queryText?: string) => {
+  const handleSend = async (queryText?: string, explicitSessionId?: string) => {
     const text = queryText || inputValue;
     if (!text.trim() || loading) return;
 
-    const currentSessionId = activeConvId || `conv-${Date.now()}`;
+    const currentSessionId = explicitSessionId || activeConvId || `conv-${Date.now()}`;
     const timestampStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
     const userMsg: ChatMessage = {
@@ -272,6 +285,7 @@ export default function Home() {
         sessionId: currentSessionId,
         message: text,
         tableNames: tables.map((t) => t.table_name),
+        userId: user?.id,
         conversationHistory: history,
       });
 
@@ -289,7 +303,7 @@ export default function Home() {
       if (!activeConvId) {
         setActiveConvId(responsePayload.session_id);
       }
-      loadConversations();
+      loadConversations(user?.id);
     } catch (err: any) {
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
@@ -313,6 +327,17 @@ export default function Home() {
   const startNewChat = () => {
     setActiveConvId(null);
     setMessages([]);
+    setTables([]);
+    setDynamicSuggestions([]);
+  };
+
+  const handleSignOut = () => {
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("auth_user");
+    localStorage.removeItem("data_analyst_user");
+    setUser(null);
+    startNewChat();
+    loadConversations();
   };
 
   const copyCode = (code: string, id: string) => {
@@ -336,6 +361,43 @@ export default function Home() {
     const link = document.createElement("a");
     link.setAttribute("href", url);
     link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const exportAnalysisReport = () => {
+    if (messages.length === 0) return;
+    let md = `# Executive Data Analysis Report\n`;
+    md += `*Generated by AI Data Analyst on ${new Date().toLocaleString()}*\n\n`;
+    if (tables.length > 0) {
+      md += `## Active Datasets\n`;
+      tables.forEach((t) => {
+        md += `- **${t.file_name}** (${t.row_count.toLocaleString()} rows, ${t.column_count} columns)\n`;
+      });
+      md += `\n---\n\n`;
+    }
+    messages.forEach((m) => {
+      if (m.role === "user") {
+        md += `### User Query:\n> ${m.content}\n\n`;
+      } else {
+        md += `### Analysis & Findings:\n${m.content}\n\n`;
+        if (m.responsePayload?.insights?.length) {
+          md += `**Key Strategic Insights:**\n`;
+          m.responsePayload.insights.forEach((ins) => (md += `- ${ins}\n`));
+          md += `\n`;
+        }
+        if (m.responsePayload?.sql_query) {
+          md += `\`\`\`sql\n${m.responsePayload.sql_query}\n\`\`\`\n\n`;
+        }
+      }
+    });
+
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `analysis_report_${Date.now()}.md`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -373,10 +435,13 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Database Conversations List */}
+        {/* Database Conversations List (Recent Chats) */}
         <div className="flex-1 overflow-y-auto px-2 space-y-0.5 scrollbar-thin">
-          <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#6b6b6b]">
-            Chat History
+          <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#6b6b6b] flex items-center justify-between">
+            <span>Recent Chats</span>
+            <span className="text-[10px] font-normal text-[#8e8e8e]">
+              {conversations.length}
+            </span>
           </div>
 
           {conversations.length === 0 ? (
@@ -410,24 +475,24 @@ export default function Home() {
           )}
         </div>
 
-        {/* Active Datasets Section */}
+        {/* Active Datasets Section for THIS Chat */}
         <div className="border-t border-[#2f2f2f] p-3 space-y-2 bg-[#171717]">
           <div className="flex items-center justify-between text-xs text-[#8e8e8e]">
             <div className="flex items-center gap-1.5 font-medium">
               <Database className="w-3.5 h-3.5" />
-              <span>{tables.length} dataset{tables.length !== 1 ? "s" : ""}</span>
+              <span>Chat Files ({tables.length})</span>
             </div>
             <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 transition"
-              title="Upload CSV to DuckDB"
+              title="Upload CSV to this chat"
             >
               <Upload className="w-3 h-3" />
               <span>Upload CSV</span>
             </button>
           </div>
 
-          {tables.length > 0 && (
+          {tables.length > 0 ? (
             <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
               {tables.map((t) => (
                 <div
@@ -448,6 +513,8 @@ export default function Home() {
                 </div>
               ))}
             </div>
+          ) : (
+            <p className="text-[11px] text-[#6b6b6b] italic">No CSVs uploaded in this chat yet.</p>
           )}
         </div>
 
@@ -459,7 +526,7 @@ export default function Home() {
             </div>
             <div className="min-w-0">
               <p className="text-xs font-medium text-[#ececec] truncate">
-                {user ? (user.full_name || user.email) : "Data Analyst"}
+                {user ? (user.full_name || user.email) : "Guest Analyst"}
               </p>
               <div className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -467,12 +534,22 @@ export default function Home() {
               </div>
             </div>
           </div>
-          <Link
-            href="/login"
-            className="text-[11px] text-[#8e8e8e] hover:text-[#ececec] transition px-2 py-1 rounded hover:bg-[#212121]"
-          >
-            {user ? "Account" : "Sign In"}
-          </Link>
+          {user ? (
+            <button
+              onClick={handleSignOut}
+              className="p-1.5 text-[#8e8e8e] hover:text-[#ececec] transition rounded hover:bg-[#212121]"
+              title="Sign out"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <Link
+              href="/login"
+              className="text-[11px] text-[#8e8e8e] hover:text-[#ececec] transition px-2 py-1 rounded hover:bg-[#212121]"
+            >
+              Sign In
+            </Link>
+          )}
         </div>
       </aside>
 
@@ -497,10 +574,15 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-2">
-            {tables.length > 0 && (
-              <span className="text-xs text-[#8e8e8e]">
-                Active: <span className="text-emerald-400 font-mono">{tables[0].file_name}</span>
-              </span>
+            {messages.length > 0 && (
+              <button
+                onClick={exportAnalysisReport}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#383838] bg-[#2f2f2f] hover:bg-[#383838] text-xs font-medium text-[#ececec] transition"
+                title="Download complete report as Markdown"
+              >
+                <Download className="w-3.5 h-3.5 text-[#8e8e8e]" />
+                <span>Export Report</span>
+              </button>
             )}
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -541,8 +623,8 @@ export default function Home() {
                   What would you like to analyze today?
                 </h1>
                 <p className="text-sm text-[#8e8e8e] max-w-md mb-8">
-                  Upload one or more CSV files. The AI Data Analyst will immediately understand the
-                  structure, evaluate data quality, and generate actionable insights.
+                  Upload one or more CSV files for this conversation. The AI Data Analyst will immediately
+                  understand the structure, evaluate data quality, and generate actionable insights.
                 </p>
 
                 {/* Drag & Drop Upload Zone */}
@@ -564,7 +646,7 @@ export default function Home() {
                     Drag and drop your CSV file(s) here, or <span className="text-emerald-400 underline">browse</span>
                   </p>
                   <p className="text-xs text-[#8e8e8e]">
-                    Supports single or multi-table analysis (Sales, Finance, HR, Logistics, etc.)
+                    Files uploaded belong strictly to this conversation. Supports multi-file joins, forecasting & anomalies.
                   </p>
                 </div>
 
@@ -866,7 +948,7 @@ export default function Home() {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className="p-2.5 rounded-full text-[#8e8e8e] hover:text-[#ececec] hover:bg-[#383838] transition shrink-0"
-                title="Upload CSV to DuckDB"
+                title="Upload CSV to this chat"
               >
                 <Paperclip className="w-4 h-4" />
               </button>
@@ -879,8 +961,8 @@ export default function Home() {
                 onKeyDown={handleKeyDown}
                 placeholder={
                   tables.length > 0
-                    ? `Ask anything about ${tables[0].file_name}...`
-                    : "Upload a CSV or ask any data analysis question..."
+                    ? `Ask anything about ${tables.map(t => t.file_name).join(", ")}...`
+                    : "Say 'hi', upload CSVs, or ask any data analysis question..."
                 }
                 rows={1}
                 disabled={loading}

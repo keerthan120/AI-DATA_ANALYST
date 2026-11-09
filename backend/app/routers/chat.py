@@ -6,10 +6,11 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from app.agents.graph import agent_graph
+from app.agents.cache_manager import query_cache
 from app.engine.duckdb_engine import db_engine
 from app.agents.anomaly_agent import AnomalyDetectionAgent
 from app.db.session import get_db, engine, Base
-from app.db.models import Conversation, ChatMessageModel
+from app.db.models import Conversation, ChatMessageModel, ensure_db_schema
 from app.models.schemas import (
     ChatRequest,
     ChatResponse,
@@ -20,17 +21,21 @@ from app.models.schemas import (
     StoredMessage,
 )
 
-# Ensure database tables exist
-Base.metadata.create_all(bind=engine)
+# Ensure database schema is migrated and up-to-date
+ensure_db_schema()
 
 router = APIRouter(prefix="/api", tags=["Agent Chat & Analysis"])
 
 @router.get("/conversations", response_model=list[ConversationSummary])
-def list_conversations(db: Session = Depends(get_db)):
+def list_conversations(user_id: Optional[int] = None, db: Session = Depends(get_db)):
     """
-    Returns all persisted chat conversations from the database ordered by most recently updated.
+    Returns all persisted chat conversations from the database.
+    If user_id is provided, filters for that user's recent chats plus unassigned guest chats.
     """
-    convs = db.query(Conversation).order_by(Conversation.updated_at.desc()).all()
+    query = db.query(Conversation)
+    if user_id:
+        query = query.filter((Conversation.user_id == user_id) | (Conversation.user_id == None))
+    convs = query.order_by(Conversation.updated_at.desc()).all()
     results = []
     for c in convs:
         count = db.query(ChatMessageModel).filter(ChatMessageModel.conversation_id == c.id).count()
@@ -39,7 +44,8 @@ def list_conversations(db: Session = Depends(get_db)):
             title=c.title,
             created_at=c.created_at.isoformat() if c.created_at else datetime.utcnow().isoformat(),
             updated_at=c.updated_at.isoformat() if c.updated_at else datetime.utcnow().isoformat(),
-            message_count=count
+            message_count=count,
+            active_tables=c.get_tables_list()
         ))
     return results
 
@@ -50,7 +56,8 @@ def create_conversation(payload: dict = {}, db: Session = Depends(get_db)):
     """
     conv_id = payload.get("id") or str(uuid.uuid4())
     title = payload.get("title") or "New Analysis"
-    conv = Conversation(id=conv_id, title=title)
+    user_id = payload.get("user_id")
+    conv = Conversation(id=conv_id, title=title, user_id=user_id, active_tables="[]")
     db.add(conv)
     db.commit()
     db.refresh(conv)
@@ -59,7 +66,8 @@ def create_conversation(payload: dict = {}, db: Session = Depends(get_db)):
         title=conv.title,
         created_at=conv.created_at.isoformat(),
         updated_at=conv.updated_at.isoformat(),
-        message_count=0
+        message_count=0,
+        active_tables=[]
     )
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
@@ -97,6 +105,7 @@ def get_conversation(conversation_id: str, db: Session = Depends(get_db)):
         title=conv.title,
         created_at=conv.created_at.isoformat(),
         updated_at=conv.updated_at.isoformat(),
+        active_tables=conv.get_tables_list(),
         messages=stored_messages
     )
 
@@ -121,18 +130,30 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
     if not request.message.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty.")
 
-    # 1. Ensure conversation exists in DB
+    # 1. Ensure conversation exists in DB and attach user_id
     session_id = request.session_id or str(uuid.uuid4())
     conv = db.query(Conversation).filter(Conversation.id == session_id).first()
     if not conv:
-        # Title generated from first prompt
         title = request.message.strip()
         if len(title) > 38:
             title = title[:38] + "..."
-        conv = Conversation(id=session_id, title=title)
+        conv = Conversation(
+            id=session_id,
+            title=title,
+            user_id=request.user_id,
+            active_tables=json.dumps(request.table_names)
+        )
         db.add(conv)
         db.commit()
         db.refresh(conv)
+    else:
+        if request.user_id and not conv.user_id:
+            conv.user_id = request.user_id
+        if request.table_names:
+            existing = conv.get_tables_list()
+            merged = list(dict.fromkeys(existing + request.table_names))
+            conv.set_tables_list(merged)
+        db.commit()
 
     # 2. Persist User Message to DB
     user_msg = ChatMessageModel(
@@ -146,11 +167,32 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
     db.add(user_msg)
     db.commit()
 
-    # 3. Initialize graph state
+    # 3. Check LRU Cache
+    cached = query_cache.get(request.message, request.table_names)
+    if cached:
+        response = ChatResponse(**cached)
+        response.session_id = conv.id
+        response.reasoning_steps = ["[Cache Hit] Returned pre-computed deterministic results from memory (<1ms)."] + response.reasoning_steps
+
+        # Save assistant message
+        assistant_msg = ChatMessageModel(
+            id=str(uuid.uuid4()),
+            conversation_id=conv.id,
+            role="assistant",
+            content=response.natural_language_answer,
+            response_payload=response.model_dump_json(),
+            created_at=datetime.utcnow()
+        )
+        db.add(assistant_msg)
+        conv.updated_at = datetime.utcnow()
+        db.commit()
+        return response
+
+    # 4. Initialize graph state
     initial_state = {
         "session_id": conv.id,
         "message": request.message,
-        "table_names": request.table_names,
+        "table_names": request.table_names or conv.get_tables_list(),
         "api_key": request.api_key,
         "model": request.model,
         "conversation_history": [m.model_dump() for m in request.conversation_history],
@@ -179,7 +221,7 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
         execution_time_ms=final_state.get("execution_time_ms", 0.0)
     )
 
-    # 4. Persist Assistant Response and Payload to DB
+    # 5. Persist Assistant Response and Payload to DB
     assistant_msg = ChatMessageModel(
         id=str(uuid.uuid4()),
         conversation_id=conv.id,
@@ -192,6 +234,9 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
     conv.updated_at = datetime.utcnow()
     db.commit()
 
+    # Cache response
+    query_cache.set(request.message, request.table_names, response.model_dump())
+
     return response
 
 @router.post("/detect-anomalies", response_model=list[AnomalyRecord])
@@ -199,18 +244,9 @@ async def detect_table_anomalies(request: AnomalyDetectRequest):
     """
     Direct anomaly detection endpoint for running IQR, Z-Score, or Isolation Forest on specific columns.
     """
-    available_tables = [t.table_name for t in db_engine.get_registered_tables_info()]
-    if request.table_name not in available_tables:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{request.table_name}' not found. Available tables: {available_tables}"
-        )
-
     df = db_engine.get_dataframe(request.table_name)
-    anomalies = AnomalyDetectionAgent.detect_anomalies(
-        df=df,
-        numeric_columns=request.column_names,
-        method=request.method,
-        z_threshold=request.threshold
-    )
-    return anomalies
+    if df.empty:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Table '{request.table_name}' not found or empty.")
+
+    target_cols = request.column_names if request.column_names else None
+    return AnomalyDetectionAgent.detect_anomalies(df, target_columns=target_cols, method=request.method, threshold=request.threshold)

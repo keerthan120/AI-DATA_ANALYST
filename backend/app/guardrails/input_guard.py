@@ -60,6 +60,11 @@ class InputGuardrail:
             if re.search(pattern, query, re.IGNORECASE):
                 violations.append(f"Directory traversal pattern detected matching: '{pattern}'")
 
+        # Check raw destructive SQL keywords in input query
+        for pattern in DESTRUCTIVE_SQL_KEYWORDS:
+            if re.search(pattern, query, re.IGNORECASE):
+                violations.append(f"Destructive SQL operation detected and blocked: '{pattern}'")
+
         is_safe = len(violations) == 0
         return is_safe, violations
 

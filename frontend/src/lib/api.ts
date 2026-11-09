@@ -3,15 +3,16 @@ import { TableSchema, ChatResponse, AnomalyRecord, UserProfile, AuthResponse, Co
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
 
 // Conversation Persistence (Database)
-export async function fetchConversations(): Promise<ConversationItem[]> {
-  const res = await fetch(`${API_BASE}/conversations`);
+export async function fetchConversations(userId?: number): Promise<ConversationItem[]> {
+  const url = userId ? `${API_BASE}/conversations?user_id=${userId}` : `${API_BASE}/conversations`;
+  const res = await fetch(url);
   if (!res.ok) {
     return [];
   }
   return res.json();
 }
 
-export async function createConversation(payload: { id?: string; title?: string } = {}): Promise<ConversationItem> {
+export async function createConversation(payload: { id?: string; title?: string; user_id?: number } = {}): Promise<ConversationItem> {
   const res = await fetch(`${API_BASE}/conversations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -38,9 +39,12 @@ export async function deleteConversation(id: string): Promise<void> {
 }
 
 // CSV Data & Ingestion
-export async function uploadFiles(files: File[]): Promise<TableSchema[]> {
+export async function uploadFiles(files: File[], conversationId?: string): Promise<TableSchema[]> {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
+  if (conversationId) {
+    formData.append("conversation_id", conversationId);
+  }
 
   const res = await fetch(`${API_BASE}/upload`, {
     method: "POST",
@@ -68,8 +72,9 @@ export async function loadSampleDatasets(): Promise<TableSchema[]> {
   return data.tables;
 }
 
-export async function fetchTables(): Promise<TableSchema[]> {
-  const res = await fetch(`${API_BASE}/tables`);
+export async function fetchTables(conversationId?: string): Promise<TableSchema[]> {
+  const url = conversationId ? `${API_BASE}/tables?conversation_id=${conversationId}` : `${API_BASE}/tables`;
+  const res = await fetch(url);
   if (!res.ok) {
     throw new Error("Failed to load tables.");
   }
@@ -80,6 +85,7 @@ export async function sendChatMessage(params: {
   sessionId?: string;
   message: string;
   tableNames: string[];
+  userId?: number;
   conversationHistory?: { role: string; content: string }[];
 }): Promise<ChatResponse> {
   const res = await fetch(`${API_BASE}/chat`, {
@@ -91,6 +97,7 @@ export async function sendChatMessage(params: {
       session_id: params.sessionId || "default-session",
       message: params.message,
       table_names: params.tableNames,
+      user_id: params.userId,
       conversation_history: params.conversationHistory || [],
     }),
   });
@@ -103,65 +110,35 @@ export async function sendChatMessage(params: {
   return res.json();
 }
 
-export async function detectAnomalies(params: {
-  tableName: string;
-  columnNames?: string[];
-  method?: string;
-  threshold?: number;
-}): Promise<AnomalyRecord[]> {
-  const res = await fetch(`${API_BASE}/detect-anomalies`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      table_name: params.tableName,
-      column_names: params.columnNames || [],
-      method: params.method || "auto",
-      threshold: params.threshold || 2.5,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail || "Failed to run anomaly detection.");
-  }
-
-  return res.json();
-}
-
-// User Authentication (PostgreSQL 16)
-export async function registerUser(payload: {
-  email: string;
-  password: string;
-  fullName?: string;
-}): Promise<AuthResponse> {
+// Authentication
+export async function registerUser(data: { email: string; password: string; full_name?: string; fullName?: string }): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      email: payload.email,
-      password: payload.password,
-      full_name: payload.fullName || null,
+      email: data.email,
+      password: data.password,
+      full_name: data.full_name || data.fullName,
     }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Registration failed.");
-  return data;
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Registration failed.");
+  }
+  return res.json();
 }
 
-export async function loginUser(payload: {
-  email: string;
-  password: string;
-}): Promise<AuthResponse> {
+export async function loginUser(data: { email: string; password: string }): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(data),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Invalid email or password.");
-  return data;
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Login failed.");
+  }
+  return res.json();
 }
 
 export async function forgotPassword(email: string): Promise<{ success: boolean; message: string; reset_token?: string }> {
@@ -170,26 +147,26 @@ export async function forgotPassword(email: string): Promise<{ success: boolean;
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Failed to request reset token.");
-  return data;
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Password reset request failed.");
+  }
+  return res.json();
 }
 
-export async function resetPassword(payload: {
-  email: string;
-  resetToken: string;
-  newPassword: string;
-}): Promise<{ success: boolean; message: string }> {
+export async function resetPassword(data: { token?: string; resetToken?: string; new_password?: string; newPassword?: string; email?: string }): Promise<{ success: boolean; message: string }> {
   const res = await fetch(`${API_BASE}/auth/reset-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      email: payload.email,
-      reset_token: payload.resetToken,
-      new_password: payload.newPassword,
+      token: data.token || data.resetToken,
+      new_password: data.new_password || data.newPassword,
+      email: data.email,
     }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "Failed to reset password.");
-  return data;
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Password reset failed.");
+  }
+  return res.json();
 }
