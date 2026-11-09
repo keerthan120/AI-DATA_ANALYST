@@ -23,42 +23,40 @@ The system provides an enterprise-focused analytics workspace:
 
 ```mermaid
 flowchart TD
-    User["User / Web Browser"] <-->|"HTTP / JSON"| Frontend["Next.js 14 Frontend"]
-    Frontend <-->|"REST API"| Gateway["FastAPI Gateway"]
+    Client["User / Web Browser"] <-->|"HTTP / Port 80"| LB["Nginx Load Balancer (least_conn)"]
+    
+    subgraph FrontendCluster ["Frontend Application Tier"]
+        LB -->|"Web Traffic"| NextApp["Next.js 14 Frontend (ChatGPT UI & UX)"]
+    end
+
+    subgraph BackendCluster ["Backend Analytical Cluster (Load Balanced)"]
+        LB -->|"/api/ Round-Robin"| BE1["FastAPI Replica 1"]
+        LB -->|"/api/ Round-Robin"| BE2["FastAPI Replica 2"]
+    end
 
     subgraph AuthLayer ["Authentication Layer (PostgreSQL)"]
         PG[("PostgreSQL 16 Engine")]
-        AuthService["Auth Router (Bcrypt / JWT)"]
+        BE1 <--> PG
+        BE2 <--> PG
     end
 
-    subgraph SecurityLayer ["Security & Guardrails"]
-        GuardIn["Input Guardrail: Prompt Injection & Path Traversal"]
-        SQLGuard["SQL Guardrail: Destructive Statement Blocker"]
-    end
-
-    Gateway <--> AuthService
-    AuthService <--> PG
-    Gateway --> SecurityLayer
-
-    subgraph LangGraphEngine ["LangGraph Multi-Agent Orchestration"]
+    subgraph LangGraphEngine ["LangGraph Multi-Agent Engine (Per Node)"]
         Supervisor["Supervisor / Router Agent"]
-        Profiler["Data Profiler & Schema RAG Agent"]
+        Profiler["Data Profiler & Schema RAG"]
         SQLAgent["SQL & Analytics Agent"]
+        DuckDB[("DuckDB In-Memory Engine")]
         VizAgent["Visualization Agent"]
-        AnomalyAgent["Statistical Anomaly Agent"]
+        AnomalyAgent["Statistical Outlier Agent"]
         Synthesizer["Insight & Explanation Agent"]
     end
 
-    SecurityLayer --> Supervisor
-    Supervisor --> Profiler
-    Profiler --> SQLAgent
-    SQLAgent -->|"Safe Query"| DuckDB[("DuckDB In-Memory Engine")]
-    DuckDB -->|"Raw Aggregates"| SQLAgent
+    BE1 --> Supervisor
+    BE2 --> Supervisor
+    Supervisor --> Profiler --> SQLAgent <--> DuckDB
     SQLAgent --> VizAgent
     SQLAgent --> AnomalyAgent
     VizAgent --> Synthesizer
     AnomalyAgent --> Synthesizer
-    Synthesizer -->|"Structured JSON / Explanation"| Gateway
 ```
 
 ---

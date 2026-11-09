@@ -1,37 +1,102 @@
 version: '3.8'
 
 services:
-  backend:
+  # 1. PostgreSQL 16 Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: data-analyst-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "4321"
+      POSTGRES_DB: data_analyst
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. FastAPI Backend Replica 1
+  backend-1:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: data-analyst-backend
+    container_name: data-analyst-backend-1
     restart: always
-    ports:
-      - "8000:8000"
     environment:
+      - DATABASE_URL=postgresql://postgres:4321@postgres:5432/data_analyst
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.0-flash-exp:free}
+      - OPENROUTER_FALLBACK_MODEL=${OPENROUTER_FALLBACK_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
     volumes:
       - ./uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 15s
+      interval: 10s
       timeout: 5s
       retries: 3
 
+  # 3. FastAPI Backend Replica 2 (Horizontal Scaling)
+  backend-2:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: data-analyst-backend-2
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://postgres:4321@postgres:5432/data_analyst
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_BASE_URL=${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.0-flash-exp:free}
+      - OPENROUTER_FALLBACK_MODEL=${OPENROUTER_FALLBACK_MODEL:-meta-llama/llama-3.3-70b-instruct:free}
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # 4. Next.js Frontend (ChatGPT UX)
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: data-analyst-frontend
     restart: always
-    ports:
-      - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8000/api
+      - NEXT_PUBLIC_API_URL=/api
     depends_on:
-      - backend
+      - backend-1
+      - backend-2
+
+  # 5. Production Nginx Load Balancer (Reverse Proxy & Least Connections Balancer)
+  load-balancer:
+    image: nginx:alpine
+    container_name: data-analyst-lb
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend-1
+      - backend-2
+
+volumes:
+  postgres-data:
 
 networks:
   default:

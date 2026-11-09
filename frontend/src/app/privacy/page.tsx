@@ -4,89 +4,39 @@ import { ArrowLeft, Shield } from "lucide-react";
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans">
-      <header className="h-14 border-b border-zinc-800 bg-zinc-950 px-6 flex items-center justify-between">
-        <Link
-          href="/"
-          className="flex items-center gap-2 text-xs font-mono text-zinc-400 hover:text-zinc-100 transition"
-        >
-          <ArrowLeft className="w-3.5 h-3.5" />
-          <span>Back to Console</span>
+    <div className="min-h-screen bg-[#212121] text-[#ececec] flex flex-col">
+      <header className="h-12 border-b border-[#2f2f2f] px-6 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2 text-sm text-[#8e8e8e] hover:text-[#ececec] transition">
+          <ArrowLeft className="w-4 h-4" />
+          <span>Back</span>
         </Link>
-        <span className="text-xs font-mono text-zinc-500">Document ID: PRIVACY-2026-V1</span>
       </header>
-
-      <main className="flex-1 max-w-4xl w-full mx-auto p-6 md:p-12 space-y-8">
-        <div className="space-y-2 border-b border-zinc-800 pb-6">
-          <div className="flex items-center gap-2 text-zinc-400 font-mono text-xs uppercase tracking-wider">
-            <Shield className="w-4 h-4 text-zinc-300" />
-            <span>Security & Compliance</span>
+      <main className="flex-1 max-w-3xl w-full mx-auto p-6 md:p-12 space-y-8">
+        <div className="space-y-2 border-b border-[#383838] pb-6">
+          <div className="flex items-center gap-2 text-[#8e8e8e] text-xs uppercase tracking-wider">
+            <Shield className="w-4 h-4" />
+            <span>Security</span>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-100">Privacy Policy</h1>
-          <p className="text-xs text-zinc-500 font-mono">Last revised: November 2026</p>
+          <h1 className="text-2xl font-semibold">Privacy Policy</h1>
+          <p className="text-xs text-[#6b6b6b]">Last revised: November 2026</p>
         </div>
-
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-200 uppercase tracking-wide font-mono">
-            1. Scope and Architecture
-          </h2>
-          <p className="text-sm text-zinc-400 leading-relaxed">
-            This platform operates on an ephemeral, in-memory analytical architecture powered by DuckDB. 
-            Uploaded datasets are held only in local application execution memory for the duration of 
-            the analytical session. Data rows are never sold, transferred to third-party ad networks, 
-            or indexed into global training corpuses.
-          </p>
+          <h2 className="text-sm font-semibold uppercase tracking-wide">1. Architecture</h2>
+          <p className="text-sm text-[#b4b4b4] leading-relaxed">This platform operates on an ephemeral, in-memory analytical architecture powered by DuckDB. Uploaded datasets are held only in local application execution memory for the duration of the analytical session. Data rows are never sold, transferred to third-party networks, or indexed into training corpuses.</p>
         </section>
-
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-200 uppercase tracking-wide font-mono">
-            2. Authentication and Account Records
-          </h2>
-          <p className="text-sm text-zinc-400 leading-relaxed">
-            Account records (email address, securely hashed passwords using salted bcrypt algorithms, 
-            and session timestamps) are stored in your configured PostgreSQL database. Passwords are never 
-            stored or logged in plaintext. Password reset tokens are generated cryptographically and expire 
-            after 1 hour.
-          </p>
+          <h2 className="text-sm font-semibold uppercase tracking-wide">2. Authentication</h2>
+          <p className="text-sm text-[#b4b4b4] leading-relaxed">Account records (email, securely hashed passwords using salted bcrypt, and session timestamps) are stored in PostgreSQL. Passwords are never stored in plaintext. Password reset tokens expire after 1 hour.</p>
         </section>
-
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-200 uppercase tracking-wide font-mono">
-            3. Large Language Model (LLM) Queries
-          </h2>
-          <p className="text-sm text-zinc-400 leading-relaxed">
-            When you execute natural language prompts, only schema definitions, column summaries, and aggregate 
-            analytical metrics necessary to synthesize SQL and business answers are sent to the upstream 
-            OpenRouter API proxy as specified in your environment configuration. Raw dataset rows remain isolated 
-            within the local DuckDB instance.
-          </p>
+          <h2 className="text-sm font-semibold uppercase tracking-wide">3. LLM Queries</h2>
+          <p className="text-sm text-[#b4b4b4] leading-relaxed">Only schema definitions and aggregate metrics are sent to the upstream OpenRouter API. Raw dataset rows remain isolated within the local DuckDB instance.</p>
         </section>
-
         <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-200 uppercase tracking-wide font-mono">
-            4. Data Retention and Erasure
-          </h2>
-          <p className="text-sm text-zinc-400 leading-relaxed">
-            You maintain full sovereignty over uploaded files. Reloading the application or terminating 
-            the backend session flushes all DuckDB in-memory tables. User accounts can be permanently purged 
-            from the PostgreSQL instance upon administrative request.
-          </p>
-        </section>
-
-        <section className="space-y-3">
-          <h2 className="text-sm font-semibold text-zinc-200 uppercase tracking-wide font-mono">
-            5. Contact and Responsible Disclosure
-          </h2>
-          <p className="text-sm text-zinc-400 leading-relaxed">
-            For operational inquiries, data erasure, or vulnerability reporting, please contact the systems 
-            administrator via your configured deployment domain.
-          </p>
+          <h2 className="text-sm font-semibold uppercase tracking-wide">4. Data Retention</h2>
+          <p className="text-sm text-[#b4b4b4] leading-relaxed">Reloading the application flushes all DuckDB in-memory tables. User accounts can be purged from PostgreSQL upon request.</p>
         </section>
       </main>
-
-      <footer className="border-t border-zinc-900 bg-zinc-950 px-6 py-4 text-xs text-zinc-600 font-mono text-center">
-        Data Analyst Engine | Confidential & Proprietary
-      </footer>
     </div>
   );
 }

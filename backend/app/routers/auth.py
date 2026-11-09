@@ -179,3 +179,4 @@ def reset_password(req: ResetPasswordRequest, db: Session = Depends(get_db)):
         "success": True,
         "message": "Password updated successfully. You may now log in with your new credentials."
     }
+
