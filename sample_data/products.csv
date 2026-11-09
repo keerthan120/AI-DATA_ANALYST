@@ -1,0 +1,11 @@
+product_id,product_name,category,cost_price,list_price,stock_quantity
+P101,Ultra Pro Laptop,Electronics,750.0,1199.99,120
+P102,Wireless Ergonomic Mouse,Accessories,15.0,39.99,450
+P103,Noise Cancelling Headphones,Audio,80.0,179.99,210
+P104,Mechanical Gaming Keyboard,Accessories,45.0,99.99,180
+P105,4K Ultra-Wide Monitor,Electronics,220.0,399.99,90
+P106,Smart Fitness Tracker,Wearables,35.0,69.99,310
+P107,USB-C Multiport Hub,Accessories,12.0,29.99,500
+P108,Portable SSD 1TB,Storage,55.0,109.99,140
+P109,Vintage Desk Fan,Office,18.0,24.99,15
+P110,Laser Pointer Stylus,Office,5.0,8.99,25

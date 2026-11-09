@@ -1,0 +1,11 @@
+customer_id,customer_name,email,segment,country,signup_date
+C001,Acme Enterprise,acme@enterprise.com,Corporate,USA,2023-01-15
+C002,Nova Corp,nova@novacorp.io,Corporate,Canada,2023-03-22
+C003,Global Logistics Ltd,contact@globallog.com,Enterprise,UK,2023-02-10
+C004,Apex Financial,billing@apexfin.com,Enterprise,USA,2023-05-18
+C005,Summit Health Systems,procurement@summithealth.org,Healthcare,USA,2023-04-09
+C006,Horizon Retail Partners,orders@horizonretail.com,Retail,Germany,2023-06-30
+C007,Starlight Media,info@starlightmedia.co,SMB,USA,2023-07-12
+C008,Pinnacle Tech Solutions,tech@pinnacletech.net,Corporate,Australia,2023-08-25
+C009,Urban Outfitters Supply,supply@urbanoutfit.org,Retail,UK,2023-09-05
+C010,BlueSky Cloud Services,admin@blueskycloud.com,SMB,USA,2023-11-14
