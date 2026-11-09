@@ -16,7 +16,7 @@ class SQLAgent:
         model: Optional[str] = None,
     ) -> tuple[Optional[str], Optional[str], list[dict[str, Any]], int, Optional[str], list[str]]:
         """
-        Generates SQL and Pandas code via LLM (or robust semantic fallback), validates via guardrails, and executes against DuckDB.
+        Generates SQL and Pandas code via LLM (or robust dynamic semantic fallback), validates via guardrails, and executes against DuckDB.
         Returns: (sql_query, python_code, rows, total_rows, error_message, reasoning_steps)
         """
         reasoning_steps: list[str] = []
@@ -38,12 +38,12 @@ class SQLAgent:
                 )
                 reasoning_steps.extend(steps)
             except Exception as e:
-                reasoning_steps.append(f"LLM API call failed or rate-limited ({str(e)}). Falling back to semantic query engine.")
-                sql_query, python_code, steps = SQLAgent._semantic_fallback_sql(user_query, table_names)
+                reasoning_steps.append(f"LLM API call failed or rate-limited ({str(e)}). Falling back to dynamic semantic query generator.")
+                sql_query, python_code, steps = SQLAgent._dynamic_semantic_sql(user_query, table_names)
                 reasoning_steps.extend(steps)
         else:
-            reasoning_steps.append("No OpenRouter API key provided. Activating built-in semantic code generator.")
-            sql_query, python_code, steps = SQLAgent._semantic_fallback_sql(user_query, table_names)
+            reasoning_steps.append("No OpenRouter API key provided. Activating dynamic semantic SQL & Pandas generator.")
+            sql_query, python_code, steps = SQLAgent._dynamic_semantic_sql(user_query, table_names)
             reasoning_steps.extend(steps)
 
         if not sql_query:
@@ -89,7 +89,7 @@ Rules:
 3. For date manipulation in DuckDB, use strftime(col, '%Y-%m') or date_trunc('month', col).
 4. If multi-table join is required, use proper JOIN syntax with matching foreign keys.
 5. Limit results to 100 unless a specific LIMIT is requested.
-6. Provide your response as a JSON object with:
+6. Provide your response as a strict JSON object with:
    - "sql": "THE_DUCKDB_SQL_QUERY",
    - "pandas": "THE_EQUIVALENT_PANDAS_PYTHON_CODE",
    - "reasoning": ["Step 1 explanation", "Step 2 explanation"]
@@ -102,198 +102,246 @@ Schema Context:
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"User Question: {user_query}"}
+                {"role": "user", "content": f"User Query: {user_query}"}
             ],
             response_format={"type": "json_object"},
-            temperature=0.0
+            temperature=0.1
         )
 
         content = response.choices[0].message.content or "{}"
         data = json.loads(content)
-        sql = data.get("sql", "").strip()
-        sql = re.sub(r"```(sql)?", "", sql).strip()
-        pandas_code = data.get("pandas", "").strip()
-        pandas_code = re.sub(r"```(python)?", "", pandas_code).strip()
-        steps = data.get("reasoning", ["Generated DuckDB SQL and Pandas code based on matching schema columns."])
-        return sql, pandas_code, steps
+        sql = data.get("sql")
+        pandas_code = data.get("pandas")
+        reasoning = data.get("reasoning", ["Synthesized SQL and Pandas from user intent and schema."])
+
+        # Clean markdown wrappers if present
+        if sql:
+            sql = re.sub(r"^```sql\s*", "", sql, flags=re.MULTILINE)
+            sql = re.sub(r"```$", "", sql, flags=re.MULTILINE).strip()
+        if pandas_code:
+            pandas_code = re.sub(r"^```python\s*", "", pandas_code, flags=re.MULTILINE)
+            pandas_code = re.sub(r"```$", "", pandas_code, flags=re.MULTILINE).strip()
+
+        return sql, pandas_code, reasoning
 
     @staticmethod
-    def _semantic_fallback_sql(user_query: str, table_names: list[str]) -> tuple[Optional[str], Optional[str], list[str]]:
+    def _dynamic_semantic_sql(
+        user_query: str,
+        table_names: list[str]
+    ) -> tuple[Optional[str], Optional[str], list[str]]:
         """
-        Intelligent semantic rules engine for answering standard analysis queries with zero hallucination.
-        Returns: (sql_query, python_code, steps)
+        Dynamically generates valid DuckDB SQL and Pandas code by matching query intent and keywords
+        against ANY registered table and its actual column types (numeric, categorical, temporal).
+        Works seamlessly for arbitrary user-uploaded CSV files.
         """
         q = user_query.lower()
-        available_tables = [t.table_name for t in db_engine.get_registered_tables_info()]
-        
-        # Identify primary table
-        sales_table = next((t for t in available_tables if "sales" in t or "trans" in t or "order" in t), available_tables[0] if available_tables else "sales_transactions")
-        cust_table = next((t for t in available_tables if "cust" in t), "customers")
-        prod_table = next((t for t in available_tables if "prod" in t or "item" in t), "products")
+        steps: list[str] = []
+        all_schemas = db_engine.get_registered_tables_info()
 
-        steps = []
+        if not all_schemas:
+            steps.append("No active tables registered in DuckDB.")
+            return None, None, steps
 
-        # 1. Highest revenue by region
-        if "region" in q and ("highest" in q or "revenue" in q or "sales" in q):
-            steps.append("Grouped sales by region and summed total_amount to identify highest revenue generator.")
-            sql = f"""
-                SELECT region, ROUND(SUM(total_amount), 2) AS total_revenue, COUNT(*) AS transaction_count
-                FROM "{sales_table}"
-                GROUP BY region
-                ORDER BY total_revenue DESC
-            """
-            pandas_code = f"""import pandas as pd
+        # 1. Determine target table
+        target_schema = None
+        if table_names:
+            for s in all_schemas:
+                if s.table_name in table_names:
+                    target_schema = s
+                    break
+        if not target_schema:
+            for s in all_schemas:
+                if s.table_name.lower() in q:
+                    target_schema = s
+                    break
+        if not target_schema:
+            target_schema = all_schemas[0]
 
-# Group sales by region and calculate revenue and volume
-result = (
-    sales_df.groupby("region", as_index=False)
-    .agg(
-        total_revenue=("total_amount", "sum"),
-        transaction_count=("total_amount", "count")
-    )
-    .round({{"total_revenue": 2}})
-    .sort_values(by="total_revenue", ascending=False)
-)
-print(result)"""
-            return sql.strip(), pandas_code, steps
+        table_name = target_schema.table_name
+        steps.append(f"Selected target table '{table_name}' with {len(target_schema.columns)} columns.")
 
-        # 2. Monthly sales trends
-        if ("monthly" in q or "month" in q or "trend" in q) and ("sales" in q or "revenue" in q or "trend" in q):
-            steps.append("Extracted monthly period from order_date and aggregated total revenue.")
-            sql = f"""
-                SELECT strftime('%Y-%m', CAST(order_date AS DATE)) AS sales_month,
-                       ROUND(SUM(total_amount), 2) AS monthly_revenue,
-                       SUM(quantity) AS total_units_sold
-                FROM "{sales_table}"
-                GROUP BY sales_month
-                ORDER BY sales_month ASC
-            """
-            pandas_code = f"""import pandas as pd
+        # Classify columns of the target table
+        columns = target_schema.columns
+        numeric_cols = [c.name for c in columns if any(t in c.dtype.upper() for t in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT", "BIGINT"])]
+        date_cols = [c.name for c in columns if any(t in c.dtype.upper() for t in ["DATE", "TIME", "TIMESTAMP"]) or "date" in c.name.lower() or "time" in c.name.lower() or "year" in c.name.lower() or "month" in c.name.lower()]
+        cat_cols = [c.name for c in columns if c.name not in numeric_cols and c.name not in date_cols]
 
-# Extract YYYY-MM period and aggregate monthly volume
-sales_df["sales_month"] = pd.to_datetime(sales_df["order_date"]).dt.strftime("%Y-%m")
-result = (
-    sales_df.groupby("sales_month", as_index=False)
-    .agg(
-        monthly_revenue=("total_amount", "sum"),
-        total_units_sold=("quantity", "sum")
-    )
-    .round({{"monthly_revenue": 2}})
-    .sort_values(by="sales_month", ascending=True)
-)
-print(result)"""
-            return sql.strip(), pandas_code, steps
+        # Match columns mentioned in query
+        matched_nums = [c for c in numeric_cols if c.lower() in q]
+        matched_cats = [c for c in cat_cols if c.lower() in q]
+        matched_dates = [c for c in date_cols if c.lower() in q]
 
-        # 3. Top five customers
-        if ("top" in q or "highest" in q or "best" in q) and ("customer" in q or "client" in q or "buyer" in q):
-            steps.append(f"Joined {sales_table} with {cust_table} on customer_id, aggregated total spend, and retrieved top 5.")
-            if cust_table in available_tables:
+        # Select primary metric and dimension
+        metric_col = matched_nums[0] if matched_nums else (numeric_cols[0] if numeric_cols else None)
+        dim_col = matched_cats[0] if matched_cats else (cat_cols[0] if cat_cols else (columns[0].name if columns else "*"))
+        date_col = matched_dates[0] if matched_dates else (date_cols[0] if date_cols else None)
+
+        # Pattern 1: Temporal / Trend query
+        if date_col and any(k in q for k in ["trend", "monthly", "over time", "seasonality", "timeline", "by month", "by date", "by year"]):
+            steps.append(f"Identified temporal trend query on date column '{date_col}' and metric '{metric_col}'.")
+            if metric_col:
                 sql = f"""
-                    SELECT c.customer_name, c.segment, c.country,
-                           ROUND(SUM(s.total_amount), 2) AS total_spent,
-                           COUNT(s.transaction_id) AS total_orders
-                    FROM "{sales_table}" s
-                    JOIN "{cust_table}" c ON s.customer_id = c.customer_id
-                    GROUP BY c.customer_name, c.segment, c.country
-                    ORDER BY total_spent DESC
-                    LIMIT 5
-                """
+SELECT strftime('%Y-%m', CAST("{date_col}" AS DATE)) AS period,
+       ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
+       COUNT(*) AS record_count
+FROM "{table_name}"
+WHERE "{date_col}" IS NOT NULL
+GROUP BY period
+ORDER BY period ASC;
+"""
                 pandas_code = f"""import pandas as pd
 
-# Inner join between transactions and customer directory
-merged = pd.merge(sales_df, customers_df, on="customer_id", how="inner")
+df = pd.read_csv('{table_name}.csv')
+df['period'] = pd.to_datetime(df['{date_col}']).dt.strftime('%Y-%m')
 result = (
-    merged.groupby(["customer_name", "segment", "country"], as_index=False)
-    .agg(
-        total_spent=("total_amount", "sum"),
-        total_orders=("transaction_id", "count")
-    )
-    .round({{"total_spent": 2}})
-    .sort_values(by="total_spent", ascending=False)
+    df.groupby('period', as_index=False)
+    .agg(total_{metric_col}=('{metric_col}', 'sum'), record_count=('{metric_col}', 'count'))
+    .round({{'total_{metric_col}': 2}})
+    .sort_values(by='period', ascending=True)
+)
+print(result)"""
+            else:
+                sql = f"""
+SELECT strftime('%Y-%m', CAST("{date_col}" AS DATE)) AS period,
+       COUNT(*) AS record_count
+FROM "{table_name}"
+WHERE "{date_col}" IS NOT NULL
+GROUP BY period
+ORDER BY period ASC;
+"""
+                pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+df['period'] = pd.to_datetime(df['{date_col}']).dt.strftime('%Y-%m')
+result = df.groupby('period', as_index=False).size().rename(columns={{'size': 'record_count'}})
+print(result)"""
+            return sql.strip(), pandas_code.strip(), steps
+
+        # Pattern 2: Top / Ranking / Highest query
+        if any(k in q for k in ["top", "highest", "best", "leading", "most", "largest", "maximum"]):
+            limit_n = 5
+            limit_match = re.search(r"top\s+(\d+)", q)
+            if limit_match:
+                limit_n = int(limit_match.group(1))
+
+            steps.append(f"Identified ranking query for top {limit_n} '{dim_col}' by '{metric_col or 'count'}'.")
+            if metric_col:
+                sql = f"""
+SELECT "{dim_col}",
+       ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
+       COUNT(*) AS frequency
+FROM "{table_name}"
+WHERE "{dim_col}" IS NOT NULL
+GROUP BY "{dim_col}"
+ORDER BY total_{metric_col} DESC
+LIMIT {limit_n};
+"""
+                pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+result = (
+    df.groupby('{dim_col}', as_index=False)
+    .agg(total_{metric_col}=('{metric_col}', 'sum'), frequency=('{dim_col}', 'count'))
+    .round({{'total_{metric_col}': 2}})
+    .sort_values(by='total_{metric_col}', ascending=False)
+    .head({limit_n})
+)
+print(result)"""
+            else:
+                sql = f"""
+SELECT "{dim_col}",
+       COUNT(*) AS frequency
+FROM "{table_name}"
+WHERE "{dim_col}" IS NOT NULL
+GROUP BY "{dim_col}"
+ORDER BY frequency DESC
+LIMIT {limit_n};
+"""
+                pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+result = df['{dim_col}'].value_counts().reset_index().head({limit_n})
+print(result)"""
+            return sql.strip(), pandas_code.strip(), steps
+
+        # Pattern 3: Underperforming / Lowest / Worst query
+        if any(k in q for k in ["underperform", "lowest", "worst", "least", "bottom", "minimum", "slow"]):
+            steps.append(f"Identified low-performance query for bottom '{dim_col}' by '{metric_col or 'count'}'.")
+            if metric_col:
+                sql = f"""
+SELECT "{dim_col}",
+       ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
+       COUNT(*) AS frequency
+FROM "{table_name}"
+WHERE "{dim_col}" IS NOT NULL
+GROUP BY "{dim_col}"
+ORDER BY total_{metric_col} ASC
+LIMIT 5;
+"""
+                pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+result = (
+    df.groupby('{dim_col}', as_index=False)
+    .agg(total_{metric_col}=('{metric_col}', 'sum'), frequency=('{dim_col}', 'count'))
+    .round({{'total_{metric_col}': 2}})
+    .sort_values(by='total_{metric_col}', ascending=True)
     .head(5)
 )
 print(result)"""
             else:
                 sql = f"""
-                    SELECT customer_id, ROUND(SUM(total_amount), 2) AS total_spent, COUNT(*) AS orders
-                    FROM "{sales_table}"
-                    GROUP BY customer_id
-                    ORDER BY total_spent DESC
-                    LIMIT 5
-                """
+SELECT "{dim_col}",
+       COUNT(*) AS frequency
+FROM "{table_name}"
+WHERE "{dim_col}" IS NOT NULL
+GROUP BY "{dim_col}"
+ORDER BY frequency ASC
+LIMIT 5;
+"""
                 pandas_code = f"""import pandas as pd
 
-# Group by customer_id and rank total spend
+df = pd.read_csv('{table_name}.csv')
+result = df['{dim_col}'].value_counts().reset_index().sort_values(by='count', ascending=True).head(5)
+print(result)"""
+            return sql.strip(), pandas_code.strip(), steps
+
+        # Pattern 4: Grouping / Aggregation / Distribution query
+        if metric_col and dim_col:
+            steps.append(f"Aggregated metric '{metric_col}' grouped by dimension '{dim_col}'.")
+            sql = f"""
+SELECT "{dim_col}",
+       ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
+       ROUND(AVG("{metric_col}"), 2) AS avg_{metric_col},
+       COUNT(*) AS count
+FROM "{table_name}"
+WHERE "{dim_col}" IS NOT NULL
+GROUP BY "{dim_col}"
+ORDER BY total_{metric_col} DESC
+LIMIT 10;
+"""
+            pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
 result = (
-    sales_df.groupby("customer_id", as_index=False)
+    df.groupby('{dim_col}', as_index=False)
     .agg(
-        total_spent=("total_amount", "sum"),
-        orders=("total_amount", "count")
+        total_{metric_col}=('{metric_col}', 'sum'),
+        avg_{metric_col}=('{metric_col}', 'mean'),
+        count=('{metric_col}', 'count')
     )
-    .round({{"total_spent": 2}})
-    .sort_values(by="total_spent", ascending=False)
-    .head(5)
+    .round({{'total_{metric_col}': 2, 'avg_{metric_col}': 2}})
+    .sort_values(by='total_{metric_col}', ascending=False)
+    .head(10)
 )
 print(result)"""
-            return sql.strip(), pandas_code, steps
+            return sql.strip(), pandas_code.strip(), steps
 
-        # 4. Underperforming products
-        if "underperform" in q or ("low" in q and "product" in q) or "worst" in q or "least sold" in q:
-            steps.append("Evaluated units sold and revenue per product to spot underperforming inventory items.")
-            if prod_table in available_tables:
-                sql = f"""
-                    SELECT p.product_name, p.category, p.stock_quantity,
-                           COALESCE(SUM(s.quantity), 0) AS total_units_sold,
-                           ROUND(COALESCE(SUM(s.total_amount), 0), 2) AS total_revenue
-                    FROM "{prod_table}" p
-                    LEFT JOIN "{sales_table}" s ON p.product_id = s.product_id
-                    GROUP BY p.product_name, p.category, p.stock_quantity
-                    ORDER BY total_units_sold ASC, total_revenue ASC
-                    LIMIT 5
-                """
-                pandas_code = f"""import pandas as pd
-
-# Left join to capture products with zero or minimal transactions
-merged = pd.merge(products_df, sales_df, on="product_id", how="left")
-result = (
-    merged.groupby(["product_name", "category", "stock_quantity"], as_index=False)
-    .agg(
-        total_units_sold=("quantity", lambda x: int(x.fillna(0).sum())),
-        total_revenue=("total_amount", lambda x: round(float(x.fillna(0).sum()), 2))
-    )
-    .sort_values(by=["total_units_sold", "total_revenue"], ascending=True)
-    .head(5)
-)
-print(result)"""
-            else:
-                sql = f"""
-                    SELECT product_id, SUM(quantity) as total_units_sold, ROUND(SUM(total_amount), 2) as total_revenue
-                    FROM "{sales_table}"
-                    GROUP BY product_id
-                    ORDER BY total_units_sold ASC
-                    LIMIT 5
-                """
-                pandas_code = f"""import pandas as pd
-
-result = (
-    sales_df.groupby("product_id", as_index=False)
-    .agg(
-        total_units_sold=("quantity", "sum"),
-        total_revenue=("total_amount", "sum")
-    )
-    .round({{"total_revenue": 2}})
-    .sort_values(by="total_units_sold", ascending=True)
-    .head(5)
-)
-print(result)"""
-            return sql.strip(), pandas_code, steps
-
-        # 5. Generic aggregation / general query
-        steps.append(f"Executed general overview query on primary table {sales_table}.")
-        sql = f'SELECT * FROM "{sales_table}" LIMIT 20'
+        # Pattern 5: Default table inspection
+        steps.append(f"Defaulting to preview query for table '{table_name}'.")
+        sql = f"SELECT * FROM \"{table_name}\" LIMIT 10;"
         pandas_code = f"""import pandas as pd
 
-# Sample overview of first 20 records
-result = sales_df.head(20)
-print(result)"""
-        return sql, pandas_code, steps
+df = pd.read_csv('{table_name}.csv')
+print(df.head(10))"""
+        return sql.strip(), pandas_code.strip(), steps

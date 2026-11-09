@@ -23,22 +23,22 @@ class InsightAgent:
 
         # If data is empty
         if not data_results and not anomalies:
-            return "No matching records were found for this criteria.", ["Verify dataset filters or column values."]
+            return "No matching records were found for this criteria in the database.", ["Verify dataset filters or column values."]
 
         if effective_key:
             try:
                 return InsightAgent._call_llm_for_insights(
                     user_query=user_query,
                     sql_query=sql_query,
-                    data_results=data_results[:10], # Send compact preview to avoid token limits
+                    data_results=data_results[:10],
                     anomalies=anomalies,
                     api_key=effective_key,
                     model=effective_model
                 )
             except Exception:
-                pass # Fallback to deterministic synthesis
+                pass # Fallback to dynamic deterministic synthesis
 
-        return InsightAgent._deterministic_synthesis(user_query, data_results, anomalies)
+        return InsightAgent._dynamic_synthesis(user_query, data_results, anomalies)
 
     @staticmethod
     def _call_llm_for_insights(
@@ -83,82 +83,61 @@ Return a strict JSON object with:
         return answer, insights
 
     @staticmethod
-    def _deterministic_synthesis(
+    def _dynamic_synthesis(
         user_query: str,
         data_results: list[dict[str, Any]],
         anomalies: list[AnomalyRecord]
     ) -> tuple[str, list[str]]:
         """
-        Deterministic, zero-hallucination analysis generator when LLM is unavailable.
+        Dynamic, zero-hallucination analysis generator when LLM is unavailable.
+        Inspects actual data result keys and values to explain findings for any arbitrary dataset.
         """
         q = user_query.lower()
         insights: list[str] = []
 
         if not data_results:
             if anomalies:
-                answer = f"Detected {len(anomalies)} statistical anomalies in the dataset."
-                insights = [a.explanation for a in anomalies[:3]]
+                answer = f"Identified **{len(anomalies)} statistical anomalies** in the dataset based on IQR bounds and Z-scores (|Z| > 2.5)."
+                insights = [f"{a.column_name} (Row {a.record_index}): {a.explanation}" for a in anomalies[:3]]
                 return answer, insights
-            return "Query completed with no records returned.", ["Check table contents or date filters."]
+            return "Query completed with no records returned.", ["Check table contents or filter criteria."]
 
         first_row = data_results[0]
         keys = list(first_row.keys())
 
-        # Region highest revenue
-        if "region" in q and any("revenue" in k or "amount" in k for k in keys):
-            reg = first_row.get("region", "Top Region")
-            rev = first_row.get("total_revenue", first_row.get(keys[1], 0))
-            answer = f"The **{reg}** region generated the highest revenue, totaling **${rev:,.2f}**."
-            insights.append(f"{reg} is the primary revenue driver in the dataset.")
-            if len(data_results) > 1:
-                runner_up = data_results[1]
-                runner_rev = runner_up.get("total_revenue", runner_up.get(keys[1], 0))
-                diff = rev - runner_rev
-                insights.append(f"Outperformed the second highest region ({runner_up.get('region')}) by ${diff:,.2f}.")
-            return answer, insights
-
-        # Monthly trends
-        if ("monthly" in q or "trend" in q) and any("revenue" in k or "amount" in k for k in keys):
-            month_col = keys[0]
-            val_col = keys[1]
-            max_row = max(data_results, key=lambda r: r.get(val_col, 0) if isinstance(r.get(val_col), (int, float)) else 0)
-            min_row = min(data_results, key=lambda r: r.get(val_col, 0) if isinstance(r.get(val_col), (int, float)) else 0)
-            
-            answer = f"Monthly sales peaked in **{max_row.get(month_col)}** at **${max_row.get(val_col, 0):,.2f}**, while the lowest period was **{min_row.get(month_col)}** at **${min_row.get(val_col, 0):,.2f}**."
-            insights.append("Clear seasonality observed with notable surge during Q4.")
-            insights.append(f"Analysis encompasses {len(data_results)} recorded monthly periods.")
-            return answer, insights
-
-        # Top customers
-        if ("customer" in q or "client" in q) and ("top" in q or "best" in q or "highest" in q):
-            cust_name = first_row.get("customer_name", first_row.get(keys[0]))
-            spend = first_row.get("total_spent", first_row.get(keys[1], 0))
-            answer = f"The top customer is **{cust_name}** with a cumulative spend of **${spend:,.2f}**."
-            insights.append(f"Top 5 accounts represent significant enterprise concentration.")
-            if "country" in first_row:
-                insights.append(f"Key accounts span international markets including {first_row.get('country')}.")
-            return answer, insights
-
-        # Underperforming products
-        if "underperform" in q or "least" in q or "worst" in q or "low" in q:
-            prod_name = first_row.get("product_name", first_row.get(keys[0]))
-            units = first_row.get("total_units_sold", 0)
-            rev = first_row.get("total_revenue", 0)
-            answer = f"The most underperforming product is **{prod_name}** with only **{units} units sold** generating **${rev:,.2f}** in revenue."
-            insights.append(f"Low inventory turnover indicates candidate for clearance or phase-out.")
-            if "stock_quantity" in first_row:
-                insights.append(f"Current stock stands at {first_row.get('stock_quantity')} units without demand.")
-            return answer, insights
-
-        # Anomalies
-        if "anomaly" in q or "anomalies" in q or "outlier" in q:
-            answer = f"Identified **{len(anomalies)} anomalies** based on statistical standard deviations (Z-score > 2.5) and IQR bounds."
-            for a in anomalies[:3]:
+        # Anomaly focus
+        if any(k in q for k in ["anomaly", "anomalies", "outlier", "unusual"]):
+            answer = f"Detected **{len(anomalies)} statistical outliers** across the dataset using IQR and Z-score distributions."
+            for a in anomalies[:4]:
                 insights.append(f"Row {a.record_index} [{a.column_name}]: {a.explanation}")
             return answer, insights
 
-        # Default summary
-        answer = f"Retrieved {len(data_results)} records matching your query."
-        insights.append(f"Key dimensions analyzed: {', '.join(keys[:4])}.")
-        return answer, insights
+        # General aggregation result
+        if len(keys) >= 2:
+            dim_key = keys[0]
+            val_key = keys[1]
+            top_dim = first_row.get(dim_key, "Top Item")
+            top_val = first_row.get(val_key, 0)
 
+            val_formatted = f"{top_val:,.2f}" if isinstance(top_val, (int, float)) else str(top_val)
+            answer = f"The leading **{dim_key}** is **{top_dim}**, with a total of **{val_formatted}**."
+
+            insights.append(f"**{top_dim}** represents the top record for **{val_key}** among {len(data_results)} ranked entries.")
+            if len(data_results) > 1:
+                runner_up = data_results[1]
+                runner_dim = runner_up.get(dim_key, "Second Item")
+                runner_val = runner_up.get(val_key, 0)
+                if isinstance(top_val, (int, float)) and isinstance(runner_val, (int, float)):
+                    diff = top_val - runner_val
+                    pct = round((diff / (runner_val or 1)) * 100, 1)
+                    insights.append(f"Outperformed the second highest ({runner_dim}) by {diff:,.2f} (+{pct}%).")
+            
+            if anomalies:
+                insights.append(f"Note: {len(anomalies)} statistical anomalies were also detected in the underlying distribution.")
+
+            return answer, insights
+
+        # Single column or preview
+        answer = f"Retrieved {len(data_results)} records matching your criteria."
+        insights.append(f"Columns in output: {', '.join(keys)}.")
+        return answer, insights

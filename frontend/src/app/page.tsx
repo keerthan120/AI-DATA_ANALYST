@@ -13,7 +13,6 @@ import {
   sendChatMessage,
   uploadFiles,
   fetchTables,
-  loadSampleDatasets,
   fetchConversations,
   fetchConversation,
   deleteConversation as deleteConvApi,
@@ -42,46 +41,10 @@ import {
   Bot,
   User,
   AlertCircle,
+  TrendingUp,
+  FileSpreadsheet,
+  HelpCircle,
 } from "lucide-react";
-
-const SUGGESTIONS = [
-  {
-    title: "Regional Revenue",
-    label: "Highest revenue by region",
-    prompt: "Which region generated the highest revenue?",
-    icon: "📈",
-  },
-  {
-    title: "Monthly Trends",
-    label: "Analyze sales seasonality",
-    prompt: "Show monthly sales trends.",
-    icon: "📅",
-  },
-  {
-    title: "Top 5 Customers",
-    label: "Multi-table join & spend ranking",
-    prompt: "What are the top five customers?",
-    icon: "🏆",
-  },
-  {
-    title: "Detect Outliers",
-    label: "IQR & Z-score anomaly detector",
-    prompt: "Detect anomalies in the dataset.",
-    icon: "⚠️",
-  },
-  {
-    title: "Underperforming SKUs",
-    label: "Identify slow inventory items",
-    prompt: "Which products are underperforming?",
-    icon: "📦",
-  },
-  {
-    title: "Code Generation",
-    label: "Generate SQL and Pandas syntax",
-    prompt: "Generate SQL and pandas code for monthly sales trends",
-    icon: "💻",
-  },
-];
 
 export default function Home() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -97,58 +60,104 @@ export default function Home() {
   const [codeMode, setCodeMode] = useState<Record<string, "sql" | "pandas">>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // 1. Initial Load: Load persistent conversations and tables from database
+  // Load user from localStorage
   useEffect(() => {
     try {
-      const stored = localStorage.getItem("auth_user");
+      const stored = localStorage.getItem("data_analyst_user");
       if (stored) {
         setUser(JSON.parse(stored));
       }
-    } catch {
-      // no auth stored
+    } catch (e) {
+      console.error("Failed to parse user profile:", e);
     }
-
-    refreshConversations();
-    fetchTables().then(setTables).catch(() => {});
   }, []);
 
-  const refreshConversations = async () => {
+  // Refresh tables and database conversations on mount
+  useEffect(() => {
+    refreshTables();
+    loadConversations();
+  }, []);
+
+  const refreshTables = async () => {
     try {
-      const list = await fetchConversations();
-      setConversations(list);
+      const list = await fetchTables();
+      setTables(list);
+      updateDynamicSuggestions(list);
     } catch (err) {
-      console.error("Failed to fetch conversations from database:", err);
+      console.error("Error loading tables:", err);
     }
   };
 
-  // 2. Load conversation messages from database when activeConvId changes
-  useEffect(() => {
-    if (!activeConvId) {
-      setMessages([]);
+  const updateDynamicSuggestions = (tableList: TableSchema[]) => {
+    if (!tableList || tableList.length === 0) {
+      setDynamicSuggestions([]);
       return;
     }
+    const t = tableList[0];
+    const numCol = t.columns.find((c) =>
+      ["INT", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT"].some((type) => c.dtype.toUpperCase().includes(type))
+    );
+    const catCol = t.columns.find(
+      (c) =>
+        !["INT", "DOUBLE", "FLOAT", "DECIMAL", "DATE", "TIME"].some((type) => c.dtype.toUpperCase().includes(type))
+    );
+    const dateCol = t.columns.find((c) =>
+      ["DATE", "TIME", "TIMESTAMP"].some((type) => c.dtype.toUpperCase().includes(type)) ||
+      c.name.toLowerCase().includes("date")
+    );
 
+    const suggestions: string[] = [];
+    suggestions.push(`Explain and provide an analytical overview of dataset '${t.table_name}'`);
+    if (catCol && numCol) {
+      suggestions.push(`Which ${catCol.name} generated the highest ${numCol.name}?`);
+      suggestions.push(`What are the top 5 ${catCol.name}s by total ${numCol.name}?`);
+    }
+    if (dateCol && numCol) {
+      suggestions.push(`Show trend of ${numCol.name} over ${dateCol.name}`);
+    } else if (catCol) {
+      suggestions.push(`Show distribution of records across ${catCol.name}`);
+    }
+    if (numCol) {
+      suggestions.push(`Detect statistical anomalies and outliers in ${numCol.name}`);
+    } else {
+      suggestions.push(`Detect statistical anomalies in this dataset`);
+    }
+    setDynamicSuggestions(suggestions);
+  };
+
+  const loadConversations = async () => {
+    try {
+      const convs = await fetchConversations();
+      setConversations(convs);
+    } catch (err) {
+      console.error("Error loading database conversations:", err);
+    }
+  };
+
+  // Load selected conversation from DB
+  useEffect(() => {
+    if (!activeConvId) return;
     setLoadingHistory(true);
     fetchConversation(activeConvId)
       .then((detail) => {
-        setMessages(detail.messages || []);
-        // Initialize default tabs for assistant messages
-        const initialTabs: Record<string, "findings" | "chart" | "data" | "sql"> = {};
-        detail.messages.forEach((m) => {
-          if (m.responsePayload?.chart && m.responsePayload.chart.type !== "none") {
-            initialTabs[m.id] = "chart";
-          } else {
-            initialTabs[m.id] = "findings";
-          }
-        });
-        setActiveTabs(initialTabs);
+        const loaded: ChatMessage[] = detail.messages.map((m) => ({
+          id: m.id,
+          role: m.role as "user" | "assistant",
+          content: m.content,
+          timestamp: m.timestamp,
+          responsePayload: m.responsePayload || undefined,
+        }));
+        setMessages(loaded);
       })
       .catch((err) => {
-        console.error("Error loading conversation history:", err);
+        console.error("Error loading conversation history from database:", err);
       })
       .finally(() => {
         setLoadingHistory(false);
@@ -171,40 +180,53 @@ export default function Home() {
     }
   }, [inputValue]);
 
-  // One-click sample dataset loader
-  const handleLoadSamples = async () => {
-    setLoading(true);
-    setStatusNotice("Loading sample datasets (sales_transactions, customers, products)...");
-    try {
-      const updated = await loadSampleDatasets();
-      setTables(updated);
-      setStatusNotice(`Loaded 3 datasets into DuckDB virtual tables (${updated.map(t => t.table_name).join(", ")}).`);
-      setTimeout(() => setStatusNotice(null), 4000);
-    } catch (err: any) {
-      setStatusNotice(`Error loading samples: ${err.message}`);
-      setTimeout(() => setStatusNotice(null), 5000);
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Handle CSV file upload
   const handleFileUpload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const csvFiles = Array.from(files).filter((f) => f.name.toLowerCase().endsWith(".csv"));
-    if (csvFiles.length === 0) return;
+    if (csvFiles.length === 0) {
+      setStatusNotice("Please upload valid CSV files (.csv).");
+      setTimeout(() => setStatusNotice(null), 3000);
+      return;
+    }
 
     setLoading(true);
     setStatusNotice(`Uploading and profiling ${csvFiles.length} file(s)...`);
     try {
       const updated = await uploadFiles(csvFiles);
       setTables(updated);
-      setStatusNotice(`Successfully profiled ${csvFiles.length} CSV dataset(s).`);
-      setTimeout(() => setStatusNotice(null), 3500);
+      updateDynamicSuggestions(updated);
+
+      const firstUploaded = updated[updated.length - 1] || updated[0];
+      setStatusNotice(`Successfully profiled '${firstUploaded.file_name}' into DuckDB.`);
+      setTimeout(() => setStatusNotice(null), 3000);
+
+      // Immediately trigger understanding and explanation for the uploaded file!
+      await handleSend(
+        `Explain and provide an analytical overview of the uploaded dataset '${firstUploaded.table_name}'.`
+      );
     } catch (err: any) {
       setStatusNotice(`Upload error: ${err.message}`);
       setTimeout(() => setStatusNotice(null), 5000);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    if (e.dataTransfer.files) {
+      handleFileUpload(e.dataTransfer.files);
     }
   };
 
@@ -254,69 +276,31 @@ export default function Home() {
       });
 
       const assistantMsg: ChatMessage = {
-        id: `assistant-${Date.now()}`,
+        id: `asst-${Date.now()}`,
         role: "assistant",
         content: responsePayload.natural_language_answer,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        responsePayload,
+        responsePayload: responsePayload,
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
-      setActiveConvId(currentSessionId);
 
-      // Refresh sidebar list to reflect database persistence
-      refreshConversations();
-
-      if (responsePayload.chart && responsePayload.chart.type !== "none") {
-        setActiveTabs((prev) => ({ ...prev, [assistantMsg.id]: "chart" }));
-      } else {
-        setActiveTabs((prev) => ({ ...prev, [assistantMsg.id]: "findings" }));
+      // Set active conversation and refresh conversation list from database
+      if (!activeConvId) {
+        setActiveConvId(responsePayload.session_id);
       }
+      loadConversations();
     } catch (err: any) {
       const errorMsg: ChatMessage = {
-        id: `error-${Date.now()}`,
+        id: `err-${Date.now()}`,
         role: "assistant",
-        content: `Error: ${err.message || "Failed to process analytical query."}`,
+        content: `Error generating response: ${err.message}. Please check if the backend service is running.`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setLoading(false);
     }
-  };
-
-  const copyToClipboard = (text: string, id: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const exportReport = (msg: ChatMessage) => {
-    if (!msg.responsePayload) return;
-    const r = msg.responsePayload;
-    const report = `# Analytical Data Report
-Generated: ${new Date().toLocaleString()}
-Query: ${msg.content}
-
-## Executive Summary
-${r.natural_language_answer}
-
-## Key Findings & Insights
-${r.insights.map((ins) => `- ${ins}`).join("\n")}
-
-${r.sql_query ? `## DuckDB SQL\n\`\`\`sql\n${r.sql_query}\n\`\`\`\n` : ""}
-${r.python_code ? `## Idiomatic Pandas Code\n\`\`\`python\n${r.python_code}\n\`\`\`\n` : ""}
-
-## Statistical Outliers
-${r.anomalies.length > 0 ? r.anomalies.map((a) => `- Row ${a.record_index} [${a.column_name}]: ${a.explanation} (Score: ${a.score})`).join("\n") : "No anomalies detected."}
-`;
-    const blob = new Blob([report], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `analysis-report-${Date.now()}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -326,21 +310,59 @@ ${r.anomalies.length > 0 ? r.anomalies.map((a) => `- Row ${a.record_index} [${a.
     }
   };
 
+  const startNewChat = () => {
+    setActiveConvId(null);
+    setMessages([]);
+  };
+
+  const copyCode = (code: string, id: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const exportCSV = (data: any[], filename = "data_export.csv") => {
+    if (!data || data.length === 0) return;
+    const headers = Object.keys(data[0]);
+    const csvContent = [
+      headers.join(","),
+      ...data.map((row) =>
+        headers.map((h) => JSON.stringify(row[h] !== undefined ? row[h] : "")).join(",")
+      ),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="h-screen flex overflow-hidden bg-[#212121] text-[#ececec]">
-      {/* ===== CHATGPT STYLE SIDEBAR ===== */}
+      {/* Hidden File Input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".csv"
+        className="hidden"
+        onChange={(e) => handleFileUpload(e.target.files)}
+      />
+
+      {/* LEFT SIDEBAR (ChatGPT Style #171717) */}
       <aside
         className={`${
           sidebarOpen ? "w-[260px]" : "w-0"
         } bg-[#171717] border-r border-[#2f2f2f] flex flex-col transition-all duration-200 overflow-hidden shrink-0 z-20`}
       >
-        {/* Top: New Analysis Button */}
+        {/* Top: New Chat Button */}
         <div className="p-3">
           <button
-            onClick={() => {
-              setActiveConvId(null);
-              setMessages([]);
-            }}
+            onClick={startNewChat}
             className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-[#383838] bg-[#212121] hover:bg-[#2f2f2f] text-sm font-medium text-[#ececec] transition group"
           >
             <div className="flex items-center gap-2">
@@ -351,42 +373,44 @@ ${r.anomalies.length > 0 ? r.anomalies.map((a) => `- Row ${a.record_index} [${a.
           </button>
         </div>
 
-        {/* Saved Chat History (Stored in Database) */}
+        {/* Database Conversations List */}
         <div className="flex-1 overflow-y-auto px-2 space-y-0.5 scrollbar-thin">
           <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#6b6b6b]">
             Chat History
           </div>
 
-          {conversations.length === 0 && (
+          {conversations.length === 0 ? (
             <p className="text-xs text-[#6b6b6b] text-center mt-6 px-4">
               No saved analyses yet. Queries are saved to your database automatically.
             </p>
-          )}
-
-          {conversations.map((conv) => (
-            <div
-              key={conv.id}
-              onClick={() => setActiveConvId(conv.id)}
-              className={`group flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm cursor-pointer transition ${
-                activeConvId === conv.id
-                  ? "bg-[#2f2f2f] text-[#ececec] font-medium"
-                  : "text-[#b4b4b4] hover:bg-[#2f2f2f]/60 hover:text-[#ececec]"
-              }`}
-            >
-              <MessageSquare className="w-4 h-4 shrink-0 text-[#8e8e8e] group-hover:text-[#ececec]" />
-              <span className="truncate flex-1 text-xs">{conv.title}</span>
-              <button
-                onClick={(e) => handleDeleteConversation(e, conv.id)}
-                className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 rounded transition"
-                title="Delete from database"
+          ) : (
+            conversations.map((conv) => (
+              <div
+                key={conv.id}
+                onClick={() => setActiveConvId(conv.id)}
+                className={`group flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition ${
+                  activeConvId === conv.id
+                    ? "bg-[#2f2f2f] text-[#ececec] font-medium"
+                    : "text-[#b4b4b4] hover:bg-[#212121] hover:text-[#ececec]"
+                }`}
               >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ))}
+                <div className="flex items-center gap-2 truncate">
+                  <MessageSquare className="w-3.5 h-3.5 shrink-0 text-[#8e8e8e]" />
+                  <span className="truncate">{conv.title || "Untitled Analysis"}</span>
+                </div>
+                <button
+                  onClick={(e) => handleDeleteConversation(e, conv.id)}
+                  className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 text-[#8e8e8e] transition rounded"
+                  title="Delete from database"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))
+          )}
         </div>
 
-        {/* Datasets / Tables Panel */}
+        {/* Active Datasets Section */}
         <div className="border-t border-[#2f2f2f] p-3 space-y-2 bg-[#171717]">
           <div className="flex items-center justify-between text-xs text-[#8e8e8e]">
             <div className="flex items-center gap-1.5 font-medium">
@@ -394,343 +418,333 @@ ${r.anomalies.length > 0 ? r.anomalies.map((a) => `- Row ${a.record_index} [${a.
               <span>{tables.length} dataset{tables.length !== 1 ? "s" : ""}</span>
             </div>
             <button
-              onClick={handleLoadSamples}
-              disabled={loading}
-              className="flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 transition"
-              title="Load pre-built sales, customers, and products datasets"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 transition"
+              title="Upload CSV to DuckDB"
             >
-              <Sparkles className="w-3 h-3" />
-              <span>Load Samples</span>
+              <Upload className="w-3 h-3" />
+              <span>Upload CSV</span>
             </button>
           </div>
 
-          {tables.length > 0 ? (
-            <div className="space-y-1 max-h-24 overflow-y-auto pr-1">
+          {tables.length > 0 && (
+            <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
               {tables.map((t) => (
                 <div
                   key={t.table_name}
-                  className="flex items-center justify-between text-xs text-[#b4b4b4] font-mono px-2 py-1 rounded bg-[#212121] border border-[#2f2f2f]"
+                  onClick={() =>
+                    handleSend(`Explain and provide an analytical overview of dataset '${t.table_name}'`)
+                  }
+                  className="flex items-center justify-between px-2 py-1.5 rounded bg-[#212121] border border-[#2f2f2f] text-xs text-[#b4b4b4] hover:text-[#ececec] hover:border-[#383838] cursor-pointer transition"
+                  title="Click to profile this table"
                 >
-                  <span className="truncate">{t.table_name}</span>
-                  <span className="text-[#6b6b6b] text-[10px] shrink-0 ml-1">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <FileSpreadsheet className="w-3 h-3 text-emerald-400 shrink-0" />
+                    <span className="truncate font-mono text-[11px]">{t.file_name}</span>
+                  </div>
+                  <span className="text-[10px] text-[#6b6b6b] shrink-0 font-mono">
                     {t.row_count.toLocaleString()}r
                   </span>
                 </div>
               ))}
             </div>
-          ) : (
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 rounded border border-dashed border-[#383838] text-xs text-[#8e8e8e] hover:text-[#ececec] hover:border-[#555] transition"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              <span>Upload CSV</span>
-            </button>
           )}
         </div>
 
-        {/* User / Settings Footer */}
+        {/* User Profile Bar */}
         <div className="border-t border-[#2f2f2f] p-3 flex items-center justify-between bg-[#171717]">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-full bg-[#2f2f2f] border border-[#383838] flex items-center justify-center text-xs font-semibold text-[#ececec] shrink-0">
               <User className="w-4 h-4 text-[#ececec]" />
             </div>
-            <div className="truncate">
+            <div className="min-w-0">
               <p className="text-xs font-medium text-[#ececec] truncate">
-                {user?.full_name || "Data Analyst Pro"}
+                {user ? (user.full_name || user.email) : "Data Analyst"}
               </p>
-              <p className="text-[10px] text-[#6b6b6b] truncate">
-                {user?.email || "PostgreSQL Persistent"}
-              </p>
+              <div className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                <p className="text-[10px] text-[#8e8e8e] truncate">PostgreSQL Persistent</p>
+              </div>
             </div>
           </div>
           <Link
-            href="/terms"
-            className="text-[11px] text-[#6b6b6b] hover:text-[#ececec] transition px-1"
-            title="Terms & Privacy"
+            href="/login"
+            className="text-[11px] text-[#8e8e8e] hover:text-[#ececec] transition px-2 py-1 rounded hover:bg-[#212121]"
           >
-            Legal
+            {user ? "Account" : "Sign In"}
           </Link>
         </div>
       </aside>
 
-      {/* ===== MAIN CHAT CANVAS ===== */}
-      <main className="flex-1 flex flex-col min-w-0 h-screen relative">
-        {/* Top Floating Bar */}
-        <header className="h-12 flex items-center justify-between px-4 border-b border-[#2f2f2f] shrink-0 bg-[#212121]/95 backdrop-blur z-10">
+      {/* MAIN CANVAS */}
+      <main className="flex-1 flex flex-col h-screen min-w-0 bg-[#212121] relative">
+        {/* Top Header */}
+        <header className="h-12 border-b border-[#2f2f2f] flex items-center justify-between px-4 bg-[#212121] shrink-0 z-10">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="p-1.5 text-[#8e8e8e] hover:text-[#ececec] rounded-lg hover:bg-[#2f2f2f] transition"
-              title="Toggle sidebar"
+              className="p-1.5 rounded-lg text-[#8e8e8e] hover:text-[#ececec] hover:bg-[#2f2f2f] transition"
+              title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             >
-              {sidebarOpen ? <PanelLeftClose className="w-5 h-5" /> : <PanelLeft className="w-5 h-5" />}
+              {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeft className="w-4 h-4" />}
             </button>
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-md bg-[#2f2f2f] border border-[#383838] flex items-center justify-center">
-                <Bot className="w-3.5 h-3.5 text-emerald-400" />
-              </div>
-              <span className="text-sm font-semibold text-[#ececec]">Data Analyst</span>
-              <span className="text-[11px] font-mono text-[#8e8e8e] bg-[#2f2f2f] px-2 py-0.5 rounded-full border border-[#383838]">
-                DuckDB + Multi-Agent
+              <span className="font-semibold text-sm text-[#ececec]">Data Analyst</span>
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#2f2f2f] border border-[#383838] text-[#8e8e8e]">
+                DuckDB + LangGraph
               </span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {statusNotice && (
-              <span className="text-xs text-amber-300 font-mono animate-pulse">
-                {statusNotice}
+            {tables.length > 0 && (
+              <span className="text-xs text-[#8e8e8e]">
+                Active: <span className="text-emerald-400 font-mono">{tables[0].file_name}</span>
               </span>
             )}
             <button
-              onClick={handleLoadSamples}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-[#2f2f2f] hover:bg-[#383838] text-[#ececec] border border-[#383838] transition"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#383838] bg-[#2f2f2f] hover:bg-[#383838] text-xs font-medium text-[#ececec] transition"
             >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Load Samples</span>
+              <Upload className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Upload CSV</span>
             </button>
           </div>
         </header>
 
-        {/* Message Stream */}
-        <div className="flex-1 overflow-y-auto px-4 py-6 scrollbar-thin">
-          {loadingHistory ? (
-            <div className="h-full flex items-center justify-center text-sm text-[#8e8e8e]">
-              <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin mr-2" />
-              <span>Loading analysis history from database...</span>
+        {/* Status Notification Banner */}
+        {statusNotice && (
+          <div className="bg-[#2f2f2f] border-b border-[#383838] px-4 py-2 text-xs text-[#ececec] flex items-center justify-between animate-fadeIn shrink-0">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{statusNotice}</span>
             </div>
-          ) : messages.length === 0 ? (
-            /* ===== CHATGPT AUTHENTIC WELCOME SCREEN ===== */
-            <div className="h-full flex flex-col items-center justify-center max-w-2xl mx-auto px-4">
-              <div className="w-12 h-12 rounded-2xl bg-[#2f2f2f] border border-[#383838] flex items-center justify-center mb-4 shadow-sm">
-                <Bot className="w-6 h-6 text-emerald-400" />
-              </div>
-              <h2 className="text-2xl font-semibold text-[#ececec] mb-2 tracking-tight">
-                What would you like to analyze today?
-              </h2>
-              <p className="text-sm text-[#8e8e8e] mb-8 text-center max-w-md">
-                Ask natural language questions, generate deterministic DuckDB SQL, preview charts, and detect statistical outliers.
-              </p>
+            <button
+              onClick={() => setStatusNotice(null)}
+              className="text-[#8e8e8e] hover:text-white text-sm leading-none"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
-              {/* 2x2 Interactive Query Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s.prompt}
-                    onClick={() => handleSend(s.prompt)}
-                    disabled={loading}
-                    className="group text-left p-4 rounded-xl border border-[#383838] bg-[#171717]/80 hover:bg-[#2f2f2f] transition text-[#ececec] hover:border-[#555] shadow-sm"
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-[#ececec] group-hover:text-white">
-                        {s.title}
-                      </span>
-                      <span className="text-base">{s.icon}</span>
-                    </div>
-                    <p className="text-xs text-[#8e8e8e] group-hover:text-[#b4b4b4]">
-                      {s.label}
-                    </p>
-                  </button>
-                ))}
-              </div>
-
-              {tables.length === 0 && (
-                <div className="mt-8 flex items-center gap-3">
-                  <button
-                    onClick={handleLoadSamples}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition shadow-md"
-                  >
-                    <Sparkles className="w-4 h-4" />
-                    <span>Load 3 Sample Datasets</span>
-                  </button>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl border border-[#383838] bg-[#2f2f2f] hover:bg-[#383838] text-xs font-medium text-[#ececec] transition"
-                  >
-                    <Upload className="w-4 h-4" />
-                    <span>Upload Your Own CSVs</span>
-                  </button>
+        {/* Central Chat / Empty State Container */}
+        <div className="flex-1 overflow-y-auto px-4 py-6">
+          <div className="max-w-3xl mx-auto space-y-6">
+            {/* If no messages: Display ChatGPT Hero & Prominent CSV Dropzone */}
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center min-h-[60vh] text-center pt-8 pb-12">
+                <div className="w-12 h-12 rounded-2xl bg-[#2f2f2f] border border-[#383838] flex items-center justify-center mb-4 shadow-lg">
+                  <Bot className="w-6 h-6 text-[#10a37f]" />
                 </div>
-              )}
-            </div>
-          ) : (
-            /* ===== CHAT MESSAGES STREAM ===== */
-            <div className="max-w-3xl mx-auto w-full space-y-6 pb-28">
-              {messages.map((m) => {
-                const isUser = m.role === "user";
-                const res = m.responsePayload;
-                const currentTab = activeTabs[m.id] || "findings";
-                const currentCode = codeMode[m.id] || "sql";
+                <h1 className="text-2xl font-semibold text-[#ececec] mb-2">
+                  What would you like to analyze today?
+                </h1>
+                <p className="text-sm text-[#8e8e8e] max-w-md mb-8">
+                  Upload one or more CSV files. The AI Data Analyst will immediately understand the
+                  structure, evaluate data quality, and generate actionable insights.
+                </p>
 
-                return (
-                  <div
-                    key={m.id}
-                    className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}
-                  >
-                    {isUser ? (
-                      /* USER MESSAGE BUBBLE */
-                      <div className="max-w-[85%] bg-[#2f2f2f] text-[#ececec] px-4 py-3 rounded-3xl rounded-tr-sm text-[15px] leading-relaxed shadow-sm">
-                        {m.content}
+                {/* Drag & Drop Upload Zone */}
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`w-full max-w-xl p-8 rounded-2xl border-2 border-dashed transition cursor-pointer flex flex-col items-center justify-center ${
+                    isDragging
+                      ? "border-emerald-500 bg-emerald-500/10"
+                      : "border-[#383838] hover:border-[#555] bg-[#2f2f2f]/40 hover:bg-[#2f2f2f]/70"
+                  }`}
+                >
+                  <div className="w-12 h-12 rounded-full bg-[#2f2f2f] border border-[#383838] flex items-center justify-center mb-3">
+                    <Upload className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <p className="text-sm font-medium text-[#ececec] mb-1">
+                    Drag and drop your CSV file(s) here, or <span className="text-emerald-400 underline">browse</span>
+                  </p>
+                  <p className="text-xs text-[#8e8e8e]">
+                    Supports single or multi-table analysis (Sales, Finance, HR, Logistics, etc.)
+                  </p>
+                </div>
+
+                {/* Dynamic Suggestion Chips if a dataset is already registered */}
+                {dynamicSuggestions.length > 0 && (
+                  <div className="w-full max-w-xl mt-8">
+                    <div className="flex items-center gap-1.5 text-xs text-[#8e8e8e] mb-3 justify-center">
+                      <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Suggested analytical questions for active dataset:</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
+                      {dynamicSuggestions.map((promptText, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => handleSend(promptText)}
+                          className="p-3 rounded-xl border border-[#383838] bg-[#2f2f2f]/60 hover:bg-[#2f2f2f] hover:border-[#555] text-xs text-[#ececec] transition group flex items-start gap-2"
+                        >
+                          <TrendingUp className="w-3.5 h-3.5 text-[#8e8e8e] group-hover:text-emerald-400 shrink-0 mt-0.5" />
+                          <span className="line-clamp-2">{promptText}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Message Thread */
+              messages.map((msg) => {
+                const payload = msg.responsePayload;
+                const activeTab = activeTabs[msg.id] || "findings";
+                const isPandas = codeMode[msg.id] === "pandas";
+
+                if (msg.role === "user") {
+                  return (
+                    <div key={msg.id} className="flex justify-end">
+                      <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-[#2f2f2f] text-[#ececec] text-sm leading-relaxed border border-[#383838]">
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                        <span className="block text-[10px] text-[#8e8e8e] mt-1.5 text-right font-mono">
+                          {msg.timestamp}
+                        </span>
                       </div>
-                    ) : (
-                      /* ASSISTANT RESPONSE */
-                      <div className="w-full space-y-3">
-                        {/* Assistant Avatar Header */}
-                        <div className="flex items-center gap-2 pt-2">
-                          <div className="w-6 h-6 rounded-full bg-emerald-600 flex items-center justify-center text-white shrink-0">
-                            <Bot className="w-3.5 h-3.5" />
-                          </div>
-                          <span className="text-xs font-semibold text-[#ececec]">Data Analyst</span>
-                          <span className="text-[11px] text-[#6b6b6b]">{m.timestamp}</span>
-                        </div>
+                    </div>
+                  );
+                }
 
-                        <div className="pl-8 space-y-3">
-                          {/* Reasoning Steps Accordion */}
-                          {res?.reasoning_steps && res.reasoning_steps.length > 0 && (
-                            <ReasoningViewer
-                              steps={res.reasoning_steps}
-                              executionTimeMs={res.execution_time_ms}
-                            />
-                          )}
+                // Assistant Response
+                return (
+                  <div key={msg.id} className="flex gap-3 text-sm text-[#ececec]">
+                    <div className="w-7 h-7 rounded-full bg-[#10a37f] flex items-center justify-center shrink-0 text-white mt-0.5 shadow-sm">
+                      <Bot className="w-4 h-4" />
+                    </div>
 
-                          {/* Executive Summary Markdown */}
-                          <div className="prose-chat text-[15px] leading-relaxed text-[#ececec] whitespace-pre-wrap">
-                            {m.content}
-                          </div>
+                    <div className="flex-1 space-y-4 min-w-0">
+                      {/* Collapsible Reasoning Process */}
+                      {payload?.reasoning_steps && payload.reasoning_steps.length > 0 && (
+                        <ReasoningViewer
+                          steps={payload.reasoning_steps}
+                          executionTimeMs={payload.execution_time_ms}
+                        />
+                      )}
 
-                          {/* Structured Analytical Tabs */}
-                          {res && (
-                            <div className="mt-4 pt-2 border-t border-[#2f2f2f] space-y-3">
-                              {/* Tab Selector Toolbar */}
-                              <div className="flex items-center justify-between flex-wrap gap-2">
-                                <div className="flex items-center gap-1 bg-[#171717] rounded-lg p-1 border border-[#2f2f2f]">
-                                  <button
-                                    onClick={() => setActiveTabs((p) => ({ ...p, [m.id]: "findings" }))}
-                                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition ${
-                                      currentTab === "findings"
-                                        ? "bg-[#2f2f2f] text-[#ececec] font-medium"
-                                        : "text-[#8e8e8e] hover:text-[#ececec]"
-                                    }`}
-                                  >
-                                    <FileText className="w-3.5 h-3.5" />
-                                    <span>Findings</span>
-                                  </button>
+                      {/* Natural Language Answer / Dataset Overview */}
+                      <div className="prose-chat text-sm text-[#ececec] leading-relaxed whitespace-pre-line bg-[#282828] p-4 rounded-xl border border-[#333]">
+                        {msg.content}
+                      </div>
 
-                                  {res.chart && res.chart.type !== "none" && (
-                                    <button
-                                      onClick={() => setActiveTabs((p) => ({ ...p, [m.id]: "chart" }))}
-                                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition ${
-                                        currentTab === "chart"
-                                          ? "bg-[#2f2f2f] text-[#ececec] font-medium"
-                                          : "text-[#8e8e8e] hover:text-[#ececec]"
-                                      }`}
-                                    >
-                                      <BarChart2 className="w-3.5 h-3.5" />
-                                      <span>Chart</span>
-                                    </button>
-                                  )}
-
-                                  {res.data_preview && res.data_preview.length > 0 && (
-                                    <button
-                                      onClick={() => setActiveTabs((p) => ({ ...p, [m.id]: "data" }))}
-                                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition ${
-                                        currentTab === "data"
-                                          ? "bg-[#2f2f2f] text-[#ececec] font-medium"
-                                          : "text-[#8e8e8e] hover:text-[#ececec]"
-                                      }`}
-                                    >
-                                      <Table className="w-3.5 h-3.5" />
-                                      <span>Data ({res.total_data_rows})</span>
-                                    </button>
-                                  )}
-
-                                  {(res.sql_query || res.python_code) && (
-                                    <button
-                                      onClick={() => setActiveTabs((p) => ({ ...p, [m.id]: "sql" }))}
-                                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition ${
-                                        currentTab === "sql"
-                                          ? "bg-[#2f2f2f] text-[#ececec] font-medium"
-                                          : "text-[#8e8e8e] hover:text-[#ececec]"
-                                      }`}
-                                    >
-                                      <Code2 className="w-3.5 h-3.5" />
-                                      <span>Code & SQL</span>
-                                    </button>
-                                  )}
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  <button
-                                    onClick={() => copyToClipboard(m.content, m.id)}
-                                    className="flex items-center gap-1 px-2.5 py-1 text-xs text-[#8e8e8e] hover:text-[#ececec] rounded-lg hover:bg-[#2f2f2f] transition"
-                                    title="Copy explanation"
-                                  >
-                                    {copiedId === m.id ? (
-                                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                    ) : (
-                                      <Copy className="w-3.5 h-3.5" />
-                                    )}
-                                    <span>Copy</span>
-                                  </button>
-
-                                  <button
-                                    onClick={() => exportReport(m)}
-                                    className="flex items-center gap-1 px-2.5 py-1 text-xs text-[#8e8e8e] hover:text-[#ececec] rounded-lg hover:bg-[#2f2f2f] transition"
-                                    title="Download Markdown Report"
-                                  >
-                                    <Download className="w-3.5 h-3.5" />
-                                    <span>Export</span>
-                                  </button>
-                                </div>
+                      {/* Strategic Insights Cards */}
+                      {payload?.insights && payload.insights.length > 0 && (
+                        <div className="space-y-1.5">
+                          <p className="text-[11px] font-semibold text-[#8e8e8e] uppercase tracking-wider">
+                            Key Analytical Insights
+                          </p>
+                          <div className="grid grid-cols-1 gap-2">
+                            {payload.insights.map((insight, idx) => (
+                              <div
+                                key={idx}
+                                className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-[#282828] border border-[#383838] text-xs text-[#ececec]"
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 mt-1.5"></span>
+                                <span className="leading-relaxed">{insight}</span>
                               </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
-                              {/* TAB 1: Key Findings & Anomaly Alerts */}
-                              {currentTab === "findings" && (
-                                <div className="space-y-3">
-                                  {res.insights && res.insights.length > 0 && (
-                                    <div className="p-3.5 bg-[#171717] rounded-xl border border-[#2f2f2f] space-y-2">
-                                      <span className="text-[11px] font-semibold text-[#8e8e8e] uppercase tracking-wider block">
-                                        Executive Takeaways
-                                      </span>
-                                      <ul className="space-y-1.5 text-sm text-[#d1d1d1] list-disc list-inside">
-                                        {res.insights.map((ins, i) => (
-                                          <li key={i} className="leading-relaxed">{ins}</li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  )}
-
-                                  {res.anomalies && res.anomalies.length > 0 && (
-                                    <AnomalyViewer anomalies={res.anomalies} />
-                                  )}
-                                </div>
+                      {/* Interactive Tab Navigation */}
+                      {payload && (
+                        <div className="rounded-xl border border-[#383838] bg-[#282828] overflow-hidden">
+                          <div className="flex items-center justify-between border-b border-[#383838] px-3 bg-[#212121]">
+                            <div className="flex space-x-1">
+                              {payload.chart && payload.chart.type !== "none" && (
+                                <button
+                                  onClick={() => setActiveTabs((p) => ({ ...p, [msg.id]: "chart" }))}
+                                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition ${
+                                    activeTab === "chart"
+                                      ? "border-emerald-400 text-emerald-400"
+                                      : "border-transparent text-[#8e8e8e] hover:text-[#ececec]"
+                                  }`}
+                                >
+                                  <BarChart2 className="w-3.5 h-3.5" />
+                                  <span>Visual Chart</span>
+                                </button>
                               )}
 
-                              {/* TAB 2: Dynamic Recharts Viewer */}
-                              {currentTab === "chart" && res.chart && (
-                                <ChartViewer chart={res.chart} data={res.data_preview} />
+                              {payload.data_preview && payload.data_preview.length > 0 && (
+                                <button
+                                  onClick={() => setActiveTabs((p) => ({ ...p, [msg.id]: "data" }))}
+                                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition ${
+                                    activeTab === "data" || (!payload.chart && activeTab === "findings")
+                                      ? "border-emerald-400 text-emerald-400"
+                                      : "border-transparent text-[#8e8e8e] hover:text-[#ececec]"
+                                  }`}
+                                >
+                                  <Table className="w-3.5 h-3.5" />
+                                  <span>Data Table ({payload.total_data_rows || payload.data_preview.length})</span>
+                                </button>
                               )}
 
-                              {/* TAB 3: Data Table View */}
-                              {currentTab === "data" && res.data_preview && (
-                                <div className="border border-[#2f2f2f] rounded-xl overflow-x-auto max-h-72 bg-[#171717]">
-                                  <table className="w-full text-left text-xs font-mono">
-                                    <thead className="bg-[#212121] text-[#8e8e8e] sticky top-0 border-b border-[#2f2f2f]">
-                                      <tr>
-                                        {Object.keys(res.data_preview[0] || {}).map((col) => (
-                                          <th key={col} className="px-3 py-2 whitespace-nowrap font-medium text-[#ececec]">
-                                            {col}
+                              {(payload.sql_query || payload.python_code) && (
+                                <button
+                                  onClick={() => setActiveTabs((p) => ({ ...p, [msg.id]: "sql" }))}
+                                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition ${
+                                    activeTab === "sql"
+                                      ? "border-emerald-400 text-emerald-400"
+                                      : "border-transparent text-[#8e8e8e] hover:text-[#ececec]"
+                                  }`}
+                                >
+                                  <Code2 className="w-3.5 h-3.5" />
+                                  <span>Code (SQL & Pandas)</span>
+                                </button>
+                              )}
+                            </div>
+
+                            {/* Export CSV for active data */}
+                            {payload.data_preview && payload.data_preview.length > 0 && (
+                              <button
+                                onClick={() => exportCSV(payload.data_preview, `analysis_${Date.now()}.csv`)}
+                                className="flex items-center gap-1 text-[11px] text-[#8e8e8e] hover:text-[#ececec] transition px-2 py-1 rounded"
+                                title="Export results to CSV"
+                              >
+                                <Download className="w-3 h-3" />
+                                <span>Export CSV</span>
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Tab Content Panes */}
+                          <div className="p-4">
+                            {/* Chart View */}
+                            {activeTab === "chart" && payload.chart && (
+                              <ChartViewer
+                                chart={payload.chart}
+                                data={payload.data_preview}
+                              />
+                            )}
+
+                            {/* Data Table View */}
+                            {(activeTab === "data" || (!payload.chart && activeTab === "findings")) &&
+                              payload.data_preview &&
+                              payload.data_preview.length > 0 && (
+                                <div className="overflow-x-auto max-h-72 scrollbar-thin">
+                                  <table className="w-full text-left text-xs border-collapse font-sans">
+                                    <thead>
+                                      <tr className="border-b border-[#383838] bg-[#212121] text-[#8e8e8e]">
+                                        {Object.keys(payload.data_preview[0]).map((h) => (
+                                          <th key={h} className="px-3 py-2 font-medium">
+                                            {h}
                                           </th>
                                         ))}
                                       </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-[#2f2f2f] text-[#d1d1d1]">
-                                      {res.data_preview.map((row, idx) => (
-                                        <tr key={idx} className="hover:bg-[#212121]/50">
-                                          {Object.keys(res.data_preview[0] || {}).map((col) => (
-                                            <td key={col} className="px-3 py-1.5 whitespace-nowrap text-[11px]">
-                                              {String(row[col])}
+                                    <tbody className="divide-y divide-[#383838]">
+                                      {payload.data_preview.map((row, rIdx) => (
+                                        <tr key={rIdx} className="hover:bg-[#212121]/50">
+                                          {Object.keys(payload.data_preview[0]).map((h) => (
+                                            <td key={h} className="px-3 py-2 text-[#ececec]">
+                                              {typeof row[h] === "number"
+                                                ? row[h].toLocaleString()
+                                                : String(row[h] !== null && row[h] !== undefined ? row[h] : "")}
                                             </td>
                                           ))}
                                         </tr>
@@ -740,128 +754,122 @@ ${r.anomalies.length > 0 ? r.anomalies.map((a) => `- Row ${a.record_index} [${a.
                                 </div>
                               )}
 
-                              {/* TAB 4: Dual Code Viewer (DuckDB SQL + Idiomatic Pandas) */}
-                              {currentTab === "sql" && (res.sql_query || res.python_code) && (
-                                <div className="bg-[#171717] border border-[#2f2f2f] rounded-xl overflow-hidden">
-                                  <div className="flex items-center justify-between px-3 py-2 bg-[#212121] border-b border-[#2f2f2f]">
-                                    <div className="flex items-center gap-1">
-                                      {res.sql_query && (
-                                        <button
-                                          onClick={() => setCodeMode((p) => ({ ...p, [m.id]: "sql" }))}
-                                          className={`px-2.5 py-1 text-[11px] font-mono rounded-md transition ${
-                                            currentCode === "sql"
-                                              ? "bg-[#2f2f2f] text-white font-semibold border border-[#383838]"
-                                              : "text-[#8e8e8e] hover:text-[#ececec]"
-                                          }`}
-                                        >
-                                          DuckDB SQL
-                                        </button>
-                                      )}
-                                      {res.python_code && (
-                                        <button
-                                          onClick={() => setCodeMode((p) => ({ ...p, [m.id]: "pandas" }))}
-                                          className={`px-2.5 py-1 text-[11px] font-mono rounded-md transition ${
-                                            currentCode === "pandas"
-                                              ? "bg-[#2f2f2f] text-white font-semibold border border-[#383838]"
-                                              : "text-[#8e8e8e] hover:text-[#ececec]"
-                                          }`}
-                                        >
-                                          Pandas (Python)
-                                        </button>
-                                      )}
-                                    </div>
-
+                            {/* SQL & Pandas Code View */}
+                            {activeTab === "sql" && (
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex gap-2">
                                     <button
-                                      onClick={() => {
-                                        const codeToCopy = (currentCode === "pandas" && res.python_code) ? res.python_code : res.sql_query || "";
-                                        copyToClipboard(codeToCopy, `${m.id}-${currentCode}`);
-                                      }}
-                                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#2f2f2f] hover:bg-[#383838] text-[#ececec] text-[11px] font-mono transition border border-[#383838]"
+                                      onClick={() => setCodeMode((p) => ({ ...p, [msg.id]: "sql" }))}
+                                      className={`px-2.5 py-1 text-xs rounded font-medium transition ${
+                                        !isPandas
+                                          ? "bg-[#383838] text-white"
+                                          : "text-[#8e8e8e] hover:text-white"
+                                      }`}
                                     >
-                                      {copiedId === `${m.id}-${currentCode}` ? (
-                                        <>
-                                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                          <span className="text-emerald-400">Copied</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Copy className="w-3.5 h-3.5" />
-                                          <span>Copy</span>
-                                        </>
-                                      )}
+                                      DuckDB SQL
+                                    </button>
+                                    <button
+                                      onClick={() => setCodeMode((p) => ({ ...p, [msg.id]: "pandas" }))}
+                                      className={`px-2.5 py-1 text-xs rounded font-medium transition ${
+                                        isPandas
+                                          ? "bg-[#383838] text-white"
+                                          : "text-[#8e8e8e] hover:text-white"
+                                      }`}
+                                    >
+                                      Pandas (Python)
                                     </button>
                                   </div>
 
-                                  <div className="p-3.5 font-mono text-xs text-[#d1d1d1] overflow-x-auto">
-                                    <pre>
-                                      {(currentCode === "pandas" && res.python_code) ? res.python_code : res.sql_query}
-                                    </pre>
-                                  </div>
+                                  <button
+                                    onClick={() =>
+                                      copyCode(
+                                        isPandas
+                                          ? payload.python_code || ""
+                                          : payload.sql_query || "",
+                                        msg.id
+                                      )
+                                    }
+                                    className="flex items-center gap-1 text-xs text-[#8e8e8e] hover:text-[#ececec] transition px-2 py-1 rounded bg-[#212121] border border-[#383838]"
+                                  >
+                                    {copiedId === msg.id ? (
+                                      <>
+                                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                        <span className="text-emerald-400">Copied</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Copy className="w-3.5 h-3.5" />
+                                        <span>Copy</span>
+                                      </>
+                                    )}
+                                  </button>
                                 </div>
-                              )}
-                            </div>
-                          )}
+
+                                <pre className="p-3 rounded-lg bg-[#1a1a1a] border border-[#333] text-xs font-mono text-emerald-300 overflow-x-auto leading-relaxed">
+                                  <code>
+                                    {isPandas
+                                      ? payload.python_code || "# No Pandas code generated"
+                                      : payload.sql_query || "-- No SQL query generated"}
+                                  </code>
+                                </pre>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      )}
+
+                      {/* Outliers & Anomaly Viewer */}
+                      {payload?.anomalies && payload.anomalies.length > 0 && (
+                        <AnomalyViewer anomalies={payload.anomalies} />
+                      )}
+                    </div>
                   </div>
                 );
-              })}
+              })
+            )}
 
-              {loading && (
-                <div className="flex items-start gap-3 pl-1">
-                  <div className="w-6 h-6 rounded-full bg-emerald-600 flex items-center justify-center text-white shrink-0">
-                    <Bot className="w-3.5 h-3.5" />
-                  </div>
-                  <div className="p-3 rounded-2xl bg-[#2f2f2f] border border-[#383838] flex items-center gap-2.5 text-xs text-[#b4b4b4]">
-                    <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                    <span className="font-mono">Synthesizing SQL & executing multi-agent workflow...</span>
-                  </div>
+            {/* Loading Indicator */}
+            {loading && (
+              <div className="flex gap-3 text-sm text-[#ececec]">
+                <div className="w-7 h-7 rounded-full bg-[#10a37f] flex items-center justify-center shrink-0 text-white">
+                  <Bot className="w-4 h-4 animate-spin" />
                 </div>
-              )}
-
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-        </div>
-
-        {/* ===== CHATGPT FLOATING PILL BOTTOM INPUT BAR ===== */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-[#212121] via-[#212121]/95 to-transparent z-10">
-          <div className="max-w-3xl mx-auto">
-            {/* Suggested Prompt Chips */}
-            {messages.length > 0 && (
-              <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s.prompt}
-                    onClick={() => handleSend(s.prompt)}
-                    disabled={loading}
-                    className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-[#171717] hover:bg-[#2f2f2f] text-[#b4b4b4] hover:text-[#ececec] border border-[#383838] transition shrink-0"
-                  >
-                    {s.title}
-                  </button>
-                ))}
+                <div className="p-4 rounded-xl bg-[#282828] border border-[#383838] flex items-center gap-3">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"></div>
+                    <div
+                      className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"
+                      style={{ animationDelay: "0.15s" }}
+                    ></div>
+                    <div
+                      className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"
+                      style={{ animationDelay: "0.3s" }}
+                    ></div>
+                  </div>
+                  <span className="text-xs text-[#8e8e8e]">
+                    Profiling schema, executing DuckDB query, and generating insights...
+                  </span>
+                </div>
               </div>
             )}
 
-            {/* Pill Container */}
-            <div className="flex items-end gap-2 bg-[#2f2f2f] rounded-3xl border border-[#383838] p-2 px-3 shadow-lg focus-within:border-[#555] transition">
-              {/* Attachment Paperclip Button */}
+            <div ref={messagesEndRef} />
+          </div>
+        </div>
+
+        {/* BOTTOM FLOATING INPUT BOX (ChatGPT Style) */}
+        <div className="p-4 bg-[#212121] shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <div className="relative flex items-end gap-2 bg-[#2f2f2f] rounded-2xl border border-[#383838] focus-within:border-[#555] p-2 transition shadow-lg">
+              {/* File Attachment Button */}
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-[#8e8e8e] hover:text-white rounded-full hover:bg-[#383838] transition shrink-0"
-                title="Attach CSV dataset"
+                className="p-2.5 rounded-full text-[#8e8e8e] hover:text-[#ececec] hover:bg-[#383838] transition shrink-0"
+                title="Upload CSV to DuckDB"
               >
-                <Paperclip className="w-5 h-5" />
+                <Paperclip className="w-4 h-4" />
               </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".csv"
-                className="hidden"
-                onChange={(e) => handleFileUpload(e.target.files)}
-              />
 
               {/* Textarea */}
               <textarea
@@ -869,16 +877,20 @@ ${r.anomalies.length > 0 ? r.anomalies.map((a) => `- Row ${a.record_index} [${a.
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask anything about your data..."
-                disabled={loading}
+                placeholder={
+                  tables.length > 0
+                    ? `Ask anything about ${tables[0].file_name}...`
+                    : "Upload a CSV or ask any data analysis question..."
+                }
                 rows={1}
-                className="flex-1 bg-transparent text-[15px] text-[#ececec] placeholder-[#6b6b6b] resize-none focus:outline-none py-2 px-1 max-h-[180px] disabled:opacity-50 leading-relaxed font-sans"
+                disabled={loading}
+                className="w-full bg-transparent text-sm text-[#ececec] placeholder-[#6b6b6b] resize-none focus:outline-none py-2 px-1 max-h-[180px] disabled:opacity-50 leading-relaxed font-sans"
               />
 
-              {/* Circular Send Button */}
+              {/* Send Button */}
               <button
                 onClick={() => handleSend()}
-                disabled={!inputValue.trim() || loading}
+                disabled={loading || !inputValue.trim()}
                 className={`p-2.5 rounded-full transition shrink-0 ${
                   inputValue.trim() && !loading
                     ? "bg-white text-black hover:bg-neutral-200"
@@ -891,7 +903,7 @@ ${r.anomalies.length > 0 ? r.anomalies.map((a) => `- Row ${a.record_index} [${a.
             </div>
 
             <p className="text-center text-[11px] text-[#6b6b6b] mt-2">
-              All questions, SQL queries, and answers are saved automatically to your database.
+              AI Data Analyst executes deterministic DuckDB SQL & Pandas code. All chat history is saved to your database.
             </p>
           </div>
         </div>
