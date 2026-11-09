@@ -4,6 +4,14 @@ An enterprise-grade, production-ready AI Data Analyst that enables users to uplo
 
 ---
 
+## 📸 Application Preview
+
+![AI Data Analyst Dashboard](docs/screenshots/dashboard_preview.jpg)
+
+*Interactive Dashboard: Multi-table schema inspection, transparent 12-step agent reasoning, interactive Recharts visualizations, DuckDB SQL generation, and outlier detection.*
+
+---
+
 ## 🌟 Key Highlights & Core Capabilities
 
 * **Multi-CSV Ingestion & Schema Profiling:** Upload single or multiple CSVs with automatic schema discovery, null checks, unique value counts, and automatic foreign key detection for cross-table joins.
@@ -229,3 +237,4 @@ Click **"Load Sample Data"** in the UI to instantly load the bundled realistic e
 1. **In-Memory DuckDB:** CSV files are registered as virtual views in DuckDB without persisting to a heavy external database, ensuring instant deployment, fast column scans, and zero database setup.
 2. **Deterministic Code-First Architecture:** Eliminates math hallucination by guaranteeing that numbers shown in the answer are computed by DuckDB/Pandas, not fabricated by LLM token generation.
 3. **Resilient Fallback Engine:** If an OpenRouter API key is not supplied or experiences rate limits, the system seamlessly uses its built-in semantic planner, ensuring 100% test pass rate and demo availability.
+

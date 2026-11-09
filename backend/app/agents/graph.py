@@ -54,10 +54,15 @@ def profiler_node(state: AgentState) -> dict[str, Any]:
 
 # 3. Supervisor & Router Node
 def supervisor_node(state: AgentState) -> dict[str, Any]:
-    query = state.get("message", "").lower()
+    query = state.get("message", "").strip().lower()
     steps = state.get("reasoning_steps", [])
     
-    if any(k in query for k in ["anomaly", "anomalies", "outlier", "unusual", "irregular"]):
+    # Check for conversational greeting or general introduction
+    greetings = {"hi", "hello", "hey", "hola", "help", "who are you", "what can you do", "good morning", "good evening"}
+    if query in greetings or any(query.startswith(g) and len(query) <= len(g) + 3 for g in greetings):
+        intent = "greeting"
+        steps.append("Supervisor recognized conversational greeting; providing assistant introduction and capability guide.")
+    elif any(k in query for k in ["anomaly", "anomalies", "outlier", "unusual", "irregular"]):
         intent = "anomaly"
         steps.append("Supervisor routed query to Statistical Anomaly Detection workflow.")
     elif any(k in query for k in ["trend", "highest", "underperform", "top", "sales", "revenue", "count", "average", "sql"]):
@@ -70,6 +75,39 @@ def supervisor_node(state: AgentState) -> dict[str, Any]:
     return {
         "intent": intent,
         "reasoning_steps": steps
+    }
+
+# 3.5 Greeting Node
+def greeting_node(state: AgentState) -> dict[str, Any]:
+    start_time = state.get("start_time", time.time())
+    steps = state.get("reasoning_steps", [])
+    tables = state.get("selected_tables", [])
+    table_list = ", ".join(tables) if tables else "none"
+
+    greeting_text = (
+        f"👋 Hello! I am your **AI Data Analyst** powered by LangGraph, DuckDB, and OpenRouter.\n\n"
+        f"Currently, I have **{len(tables)} active dataset(s)** loaded in memory (`{table_list}`).\n\n"
+        f"**Here are some questions you can ask me right now:**\n"
+        f"• *\"Which region generated the highest revenue?\"*\n"
+        f"• *\"Show monthly sales trends.\"*\n"
+        f"• *\"What are the top five customers?\"*\n"
+        f"• *\"Which products are underperforming?\"*\n"
+        f"• *\"Detect anomalies in the dataset.\"*\n"
+        f"• *\"Generate SQL for this analysis.\"*"
+    )
+    steps.append("Prepared tailored greeting with active dataset context and suggested prompts.")
+    elapsed_ms = round((time.time() - start_time) * 1000, 2)
+
+    return {
+        "natural_language_answer": greeting_text,
+        "insights": [
+            f"{len(tables)} table(s) ready for querying.",
+            "Ask questions in natural language to generate SQL, interactive visualizations, and anomaly reports."
+        ],
+        "chart": None,
+        "data_results": [],
+        "reasoning_steps": steps,
+        "execution_time_ms": elapsed_ms
     }
 
 # 4. SQL Analytics & Execution Node
@@ -171,6 +209,8 @@ def route_after_guardrail(state: AgentState) -> str:
 
 def route_by_intent(state: AgentState) -> str:
     intent = state.get("intent", "sql_analysis")
+    if intent == "greeting":
+        return "greeting"
     if intent == "anomaly":
         return "anomaly"
     return "sql"
@@ -182,6 +222,7 @@ def build_data_analyst_graph():
     builder.add_node("guardrail", input_guardrail_node)
     builder.add_node("profiler", profiler_node)
     builder.add_node("supervisor", supervisor_node)
+    builder.add_node("greeting", greeting_node)
     builder.add_node("sql", sql_node)
     builder.add_node("anomaly", anomaly_node)
     builder.add_node("viz", viz_node)
@@ -190,8 +231,15 @@ def build_data_analyst_graph():
     builder.add_edge(START, "guardrail")
     builder.add_conditional_edges("guardrail", route_after_guardrail, {"profiler": "profiler", END: END})
     builder.add_edge("profiler", "supervisor")
-    builder.add_conditional_edges("supervisor", route_by_intent, {"anomaly": "anomaly", "sql": "sql"})
+    builder.add_conditional_edges("supervisor", route_by_intent, {
+        "greeting": "greeting",
+        "anomaly": "anomaly",
+        "sql": "sql"
+    })
     
+    # Greeting flow: greeting -> END
+    builder.add_edge("greeting", END)
+
     # Anomaly flow: anomaly -> viz -> synthesizer -> END
     builder.add_edge("anomaly", "viz")
     # SQL flow: sql -> viz -> anomaly (for outlier check) -> synthesizer -> END
@@ -203,3 +251,4 @@ def build_data_analyst_graph():
 
 # Global compiled graph
 agent_graph = build_data_analyst_graph()
+
