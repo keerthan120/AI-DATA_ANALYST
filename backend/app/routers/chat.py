@@ -189,10 +189,14 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
         return response
 
     # 4. Initialize graph state
+    active_tables = request.table_names or conv.get_tables_list()
+    if not active_tables:
+        active_tables = list(db_engine.registered_tables.keys())
+
     initial_state = {
         "session_id": conv.id,
         "message": request.message,
-        "table_names": request.table_names or conv.get_tables_list(),
+        "table_names": active_tables,
         "api_key": request.api_key,
         "model": request.model,
         "conversation_history": [m.model_dump() for m in request.conversation_history],
@@ -238,6 +242,11 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
     query_cache.set(request.message, request.table_names, response.model_dump())
 
     return response
+
+@router.post("/cache/clear")
+def clear_cache():
+    query_cache.clear()
+    return {"success": True, "message": "Query cache cleared successfully."}
 
 @router.post("/detect-anomalies", response_model=list[AnomalyRecord])
 async def detect_table_anomalies(request: AnomalyDetectRequest):

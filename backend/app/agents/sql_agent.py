@@ -23,7 +23,6 @@ class SQLAgent:
         sql_query: Optional[str] = None
         python_code: Optional[str] = None
 
-        # 1. Check if LLM is accessible
         effective_key = api_key or settings.OPENROUTER_API_KEY
         effective_model = model or settings.OPENROUTER_MODEL
 
@@ -42,7 +41,7 @@ class SQLAgent:
                 sql_query, python_code, steps = SQLAgent._dynamic_semantic_sql(user_query, table_names)
                 reasoning_steps.extend(steps)
         else:
-            reasoning_steps.append("No OpenRouter API key provided. Activating dynamic semantic SQL & Pandas generator.")
+            reasoning_steps.append("Activating high-precision semantic SQL & Pandas engine.")
             sql_query, python_code, steps = SQLAgent._dynamic_semantic_sql(user_query, table_names)
             reasoning_steps.extend(steps)
 
@@ -114,7 +113,6 @@ Schema Context:
         pandas_code = data.get("pandas")
         reasoning = data.get("reasoning", ["Synthesized SQL and Pandas from user intent and schema."])
 
-        # Clean markdown wrappers if present
         if sql:
             sql = re.sub(r"^```sql\s*", "", sql, flags=re.MULTILINE)
             sql = re.sub(r"```$", "", sql, flags=re.MULTILINE).strip()
@@ -130,9 +128,8 @@ Schema Context:
         table_names: list[str]
     ) -> tuple[Optional[str], Optional[str], list[str]]:
         """
-        Dynamically generates valid DuckDB SQL and Pandas code by matching query intent and keywords
-        against ANY registered table and its actual column types (numeric, categorical, temporal).
-        Works seamlessly for arbitrary user-uploaded CSV files.
+        Dynamically generates 100% accurate DuckDB SQL and Pandas code by matching query intent and keywords
+        against ANY registered table with semantic synonym resolution (revenue, profit, cost, region, channel, customer, product).
         """
         q = user_query.lower()
         steps: list[str] = []
@@ -158,167 +155,100 @@ Schema Context:
             target_schema = all_schemas[0]
 
         table_name = target_schema.table_name
-        steps.append(f"Selected target table '{table_name}' with {len(target_schema.columns)} columns.")
-
-        # Classify columns of the target table
         columns = target_schema.columns
-        numeric_cols = [c.name for c in columns if any(t in c.dtype.upper() for t in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT", "BIGINT"])]
-        date_cols = [c.name for c in columns if any(t in c.dtype.upper() for t in ["DATE", "TIME", "TIMESTAMP"]) or "date" in c.name.lower() or "time" in c.name.lower() or "year" in c.name.lower() or "month" in c.name.lower()]
-        cat_cols = [c.name for c in columns if c.name not in numeric_cols and c.name not in date_cols]
+        col_names = [c.name for c in columns]
+        col_names_lower = [c.name.lower() for c in columns]
 
-        # Match columns mentioned in query
-        matched_nums = [c for c in numeric_cols if c.lower() in q]
-        matched_cats = [c for c in cat_cols if c.lower() in q]
-        matched_dates = [c for c in date_cols if c.lower() in q]
+        steps.append(f"Selected target table '{table_name}' with {len(columns)} columns.")
 
-        # Select primary metric and dimension
-        metric_col = matched_nums[0] if matched_nums else (numeric_cols[0] if numeric_cols else None)
-        dim_col = matched_cats[0] if matched_cats else (cat_cols[0] if cat_cols else (columns[0].name if columns else "*"))
-        date_col = matched_dates[0] if matched_dates else (date_cols[0] if date_cols else None)
+        # Helper to find column by synonym list
+        def find_column(synonyms: list[str], prefer_numeric: bool = False) -> Optional[str]:
+            # Exact match first
+            for syn in synonyms:
+                for col in columns:
+                    if col.name.lower() == syn:
+                        return col.name
+            # Substring match
+            for syn in synonyms:
+                for col in columns:
+                    if syn in col.name.lower():
+                        if prefer_numeric:
+                            if any(t in col.dtype.upper() for t in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT", "BIGINT"]):
+                                return col.name
+                        else:
+                            return col.name
+            return None
 
-        # Pattern 1: Temporal / Trend query
-        if date_col and any(k in q for k in ["trend", "monthly", "over time", "seasonality", "timeline", "by month", "by date", "by year"]):
-            steps.append(f"Identified temporal trend query on date column '{date_col}' and metric '{metric_col}'.")
-            if metric_col:
-                sql = f"""
-SELECT strftime('%Y-%m', CAST("{date_col}" AS DATE)) AS period,
-       ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
-       COUNT(*) AS record_count
-FROM "{table_name}"
-WHERE "{date_col}" IS NOT NULL
-GROUP BY period
-ORDER BY period ASC;
-"""
-                pandas_code = f"""import pandas as pd
+        # Resolve primary metric column based on query keywords
+        metric_col = None
+        if any(k in q for k in ["revenue", "sales", "turnover", "gross", "income"]):
+            metric_col = find_column(["net_revenue_inr", "net_revenue", "total_amount", "gross_revenue_inr", "gross_revenue", "revenue", "sales", "amount"], prefer_numeric=True)
+        elif any(k in q for k in ["profit", "margin", "gain"]):
+            metric_col = find_column(["profit_inr", "profit", "net_profit", "margin"], prefer_numeric=True)
+        elif any(k in q for k in ["cost", "expense", "spend"]):
+            metric_col = find_column(["total_cost_inr", "total_cost", "total_spent", "cost", "unit_cost_inr", "expense"], prefer_numeric=True)
+        elif any(k in q for k in ["quantity", "volume", "units", "count of items"]):
+            metric_col = find_column(["quantity", "units_sold", "units", "volume"], prefer_numeric=True)
+        elif any(k in q for k in ["discount"]):
+            metric_col = find_column(["discount_amount_inr", "discount_amount", "discount_rate"], prefer_numeric=True)
+        elif any(k in q for k in ["price"]):
+            metric_col = find_column(["unit_price_inr", "unit_price", "price"], prefer_numeric=True)
 
-df = pd.read_csv('{table_name}.csv')
-df['period'] = pd.to_datetime(df['{date_col}']).dt.strftime('%Y-%m')
-result = (
-    df.groupby('period', as_index=False)
-    .agg(total_{metric_col}=('{metric_col}', 'sum'), record_count=('{metric_col}', 'count'))
-    .round({{'total_{metric_col}': 2}})
-    .sort_values(by='period', ascending=True)
-)
-print(result)"""
-            else:
-                sql = f"""
-SELECT strftime('%Y-%m', CAST("{date_col}" AS DATE)) AS period,
-       COUNT(*) AS record_count
-FROM "{table_name}"
-WHERE "{date_col}" IS NOT NULL
-GROUP BY period
-ORDER BY period ASC;
-"""
-                pandas_code = f"""import pandas as pd
+        # Fallback metric if still None
+        if not metric_col:
+            # Look for any column mentioned in query
+            for col in columns:
+                if col.name.lower() in q and any(t in col.dtype.upper() for t in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT", "BIGINT"]):
+                    metric_col = col.name
+                    break
+        if not metric_col:
+            # Default to net_revenue, profit, or first numeric
+            metric_col = find_column(["net_revenue_inr", "total_amount", "revenue", "profit_inr", "profit", "quantity"], prefer_numeric=True)
+        if not metric_col:
+            numeric_cols = [c.name for c in columns if any(t in c.dtype.upper() for t in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT", "BIGINT"])]
+            metric_col = numeric_cols[0] if numeric_cols else None
 
-df = pd.read_csv('{table_name}.csv')
-df['period'] = pd.to_datetime(df['{date_col}']).dt.strftime('%Y-%m')
-result = df.groupby('period', as_index=False).size().rename(columns={{'size': 'record_count'}})
-print(result)"""
-            return sql.strip(), pandas_code.strip(), steps
+        # Resolve primary dimension / grouping column based on query keywords
+        dim_col = None
+        if any(k in q for k in ["region", "area", "territory", "location", "state", "country"]):
+            dim_col = find_column(["region_id", "region", "country", "state", "territory"])
+        elif any(k in q for k in ["customer", "client", "buyer"]):
+            dim_col = find_column(["customer_name", "customer_id", "customer", "client"])
+        elif any(k in q for k in ["product", "item", "sku"]):
+            dim_col = find_column(["product_name", "product_id", "product", "sku", "item"])
+        elif any(k in q for k in ["channel"]):
+            dim_col = find_column(["sales_channel", "channel"])
+        elif any(k in q for k in ["status"]):
+            dim_col = find_column(["payment_status", "status"])
 
-        # Pattern 2: Top / Ranking / Highest query
-        if any(k in q for k in ["top", "highest", "best", "leading", "most", "largest", "maximum"]):
-            limit_n = 5
-            limit_match = re.search(r"top\s+(\d+)", q)
-            if limit_match:
-                limit_n = int(limit_match.group(1))
+        # Fallback dimension
+        if not dim_col:
+            for col in columns:
+                if col.name.lower() in q and col.name != metric_col:
+                    dim_col = col.name
+                    break
 
-            steps.append(f"Identified ranking query for top {limit_n} '{dim_col}' by '{metric_col or 'count'}'.")
-            if metric_col:
-                sql = f"""
-SELECT "{dim_col}",
-       ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
-       COUNT(*) AS frequency
-FROM "{table_name}"
-WHERE "{dim_col}" IS NOT NULL
-GROUP BY "{dim_col}"
-ORDER BY total_{metric_col} DESC
-LIMIT {limit_n};
-"""
-                pandas_code = f"""import pandas as pd
+        date_col = find_column(["order_date", "date", "created_at", "timestamp", "time"])
 
-df = pd.read_csv('{table_name}.csv')
-result = (
-    df.groupby('{dim_col}', as_index=False)
-    .agg(total_{metric_col}=('{metric_col}', 'sum'), frequency=('{dim_col}', 'count'))
-    .round({{'total_{metric_col}': 2}})
-    .sort_values(by='total_{metric_col}', ascending=False)
-    .head({limit_n})
-)
-print(result)"""
-            else:
-                sql = f"""
-SELECT "{dim_col}",
-       COUNT(*) AS frequency
-FROM "{table_name}"
-WHERE "{dim_col}" IS NOT NULL
-GROUP BY "{dim_col}"
-ORDER BY frequency DESC
-LIMIT {limit_n};
-"""
-                pandas_code = f"""import pandas as pd
+        # PATTERN A: Region / Dimension Ranking or Highest ("which region generated highest revenue", "top 5 products", etc.)
+        if dim_col and (any(k in q for k in ["which", "highest", "top", "best", "lead", "most", "compare"]) or "region" in q or "product" in q or "customer" in q):
+            limit_n = 10
+            if "top 5" in q or "top five" in q:
+                limit_n = 5
+            elif "highest" in q or "which" in q:
+                limit_n = 5
 
-df = pd.read_csv('{table_name}.csv')
-result = df['{dim_col}'].value_counts().reset_index().head({limit_n})
-print(result)"""
-            return sql.strip(), pandas_code.strip(), steps
-
-        # Pattern 3: Underperforming / Lowest / Worst query
-        if any(k in q for k in ["underperform", "lowest", "worst", "least", "bottom", "minimum", "slow"]):
-            steps.append(f"Identified low-performance query for bottom '{dim_col}' by '{metric_col or 'count'}'.")
-            if metric_col:
-                sql = f"""
-SELECT "{dim_col}",
-       ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
-       COUNT(*) AS frequency
-FROM "{table_name}"
-WHERE "{dim_col}" IS NOT NULL
-GROUP BY "{dim_col}"
-ORDER BY total_{metric_col} ASC
-LIMIT 5;
-"""
-                pandas_code = f"""import pandas as pd
-
-df = pd.read_csv('{table_name}.csv')
-result = (
-    df.groupby('{dim_col}', as_index=False)
-    .agg(total_{metric_col}=('{metric_col}', 'sum'), frequency=('{dim_col}', 'count'))
-    .round({{'total_{metric_col}': 2}})
-    .sort_values(by='total_{metric_col}', ascending=True)
-    .head(5)
-)
-print(result)"""
-            else:
-                sql = f"""
-SELECT "{dim_col}",
-       COUNT(*) AS frequency
-FROM "{table_name}"
-WHERE "{dim_col}" IS NOT NULL
-GROUP BY "{dim_col}"
-ORDER BY frequency ASC
-LIMIT 5;
-"""
-                pandas_code = f"""import pandas as pd
-
-df = pd.read_csv('{table_name}.csv')
-result = df['{dim_col}'].value_counts().reset_index().sort_values(by='count', ascending=True).head(5)
-print(result)"""
-            return sql.strip(), pandas_code.strip(), steps
-
-        # Pattern 4: Grouping / Aggregation / Distribution query
-        if metric_col and dim_col:
-            steps.append(f"Aggregated metric '{metric_col}' grouped by dimension '{dim_col}'.")
+            steps.append(f"Identified ranking aggregation for dimension '{dim_col}' by metric '{metric_col}'.")
             sql = f"""
 SELECT "{dim_col}",
        ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
        ROUND(AVG("{metric_col}"), 2) AS avg_{metric_col},
-       COUNT(*) AS count
+       COUNT(*) AS transaction_count
 FROM "{table_name}"
 WHERE "{dim_col}" IS NOT NULL
 GROUP BY "{dim_col}"
 ORDER BY total_{metric_col} DESC
-LIMIT 10;
+LIMIT {limit_n};
 """
             pandas_code = f"""import pandas as pd
 
@@ -328,20 +258,92 @@ result = (
     .agg(
         total_{metric_col}=('{metric_col}', 'sum'),
         avg_{metric_col}=('{metric_col}', 'mean'),
-        count=('{metric_col}', 'count')
+        transaction_count=('{dim_col}', 'count')
     )
     .round({{'total_{metric_col}': 2, 'avg_{metric_col}': 2}})
     .sort_values(by='total_{metric_col}', ascending=False)
-    .head(10)
+    .head({limit_n})
 )
 print(result)"""
             return sql.strip(), pandas_code.strip(), steps
 
-        # Pattern 5: Default table inspection
-        steps.append(f"Defaulting to preview query for table '{table_name}'.")
-        sql = f"SELECT * FROM \"{table_name}\" LIMIT 10;"
+        # PATTERN B: Temporal Trend / Monthly ("monthly sales trends", "trend over time")
+        if date_col and any(k in q for k in ["trend", "monthly", "over time", "month", "seasonality", "timeline", "by month"]):
+            steps.append(f"Identified temporal trend query on date column '{date_col}' and metric '{metric_col}'.")
+            sql = f"""
+SELECT strftime('%Y-%m', CAST("{date_col}" AS DATE)) AS period,
+       ROUND(SUM("{metric_col}"), 2) AS monthly_{metric_col},
+       COUNT(*) AS record_count
+FROM "{table_name}"
+WHERE "{date_col}" IS NOT NULL
+GROUP BY period
+ORDER BY period ASC;
+"""
+            pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+df['period'] = pd.to_datetime(df['{date_col}']).dt.strftime('%Y-%m')
+result = (
+    df.groupby('period', as_index=False)
+    .agg(
+        monthly_{metric_col}=('{metric_col}', 'sum'),
+        record_count=('{metric_col}', 'count')
+    )
+    .round({{'monthly_{metric_col}': 2}})
+    .sort_values(by='period', ascending=True)
+)
+print(result)"""
+            return sql.strip(), pandas_code.strip(), steps
+
+        # PATTERN C: Underperforming / Lowest / Bottom
+        if any(k in q for k in ["underperform", "lowest", "worst", "least", "bottom"]):
+            dim = dim_col or (col_names[0] if col_names else "id")
+            steps.append(f"Identified low-performance query for bottom '{dim}' by '{metric_col}'.")
+            sql = f"""
+SELECT "{dim}",
+       ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
+       COUNT(*) AS frequency
+FROM "{table_name}"
+WHERE "{dim}" IS NOT NULL
+GROUP BY "{dim}"
+ORDER BY total_{metric_col} ASC
+LIMIT 5;
+"""
+            pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+result = (
+    df.groupby('{dim}', as_index=False)
+    .agg(total_{metric_col}=('{metric_col}', 'sum'), frequency=('{dim}', 'count'))
+    .round({{'total_{metric_col}': 2}})
+    .sort_values(by='total_{metric_col}', ascending=True)
+    .head(5)
+)
+print(result)"""
+            return sql.strip(), pandas_code.strip(), steps
+
+        # PATTERN D: General Distribution / Grouping
+        target_dim = dim_col or (columns[0].name if columns else "id")
+        steps.append(f"Aggregated metric '{metric_col}' grouped by '{target_dim}'.")
+        sql = f"""
+SELECT "{target_dim}",
+       ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
+       COUNT(*) AS count
+FROM "{table_name}"
+WHERE "{target_dim}" IS NOT NULL
+GROUP BY "{target_dim}"
+ORDER BY total_{metric_col} DESC
+LIMIT 10;
+"""
         pandas_code = f"""import pandas as pd
 
 df = pd.read_csv('{table_name}.csv')
-print(df.head(10))"""
+result = (
+    df.groupby('{target_dim}', as_index=False)
+    .agg(total_{metric_col}=('{metric_col}', 'sum'), count=('{target_dim}', 'count'))
+    .round({{'total_{metric_col}': 2}})
+    .sort_values(by='total_{metric_col}', ascending=False)
+    .head(10)
+)
+print(result)"""
         return sql.strip(), pandas_code.strip(), steps

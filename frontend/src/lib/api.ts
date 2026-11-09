@@ -141,6 +141,16 @@ export async function loginUser(data: { email: string; password: string }): Prom
   return res.json();
 }
 
+export async function clearCacheApi(): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/cache/clear`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error("Failed to clear cache.");
+  }
+  return res.json();
+}
+
 export async function forgotPassword(email: string): Promise<{ success: boolean; message: string; reset_token?: string }> {
   const res = await fetch(`${API_BASE}/auth/forgot-password`, {
     method: "POST",

@@ -2,7 +2,7 @@
   "total_benchmarks": 8,
   "passed_benchmarks": 8,
   "accuracy_score_pct": 100.0,
-  "average_latency_ms": 7582.49,
+  "average_latency_ms": 14603.71,
   "results": [
     {
       "test_id": "TC-01-GREETING",
@@ -13,7 +13,7 @@
       "sql_generated": false,
       "execution_success": true,
       "chart_generated": false,
-      "latency_ms": 4244.73,
+      "latency_ms": 13277.23,
       "passed": true,
       "notes": "Deterministic execution succeeded."
     },
@@ -26,7 +26,7 @@
       "sql_generated": true,
       "execution_success": true,
       "chart_generated": false,
-      "latency_ms": 9502.55,
+      "latency_ms": 23210.7,
       "passed": true,
       "notes": "Deterministic execution succeeded."
     },
@@ -39,7 +39,7 @@
       "sql_generated": true,
       "execution_success": true,
       "chart_generated": true,
-      "latency_ms": 10274.03,
+      "latency_ms": 37773.97,
       "passed": true,
       "notes": "Deterministic execution succeeded."
     },
@@ -52,7 +52,7 @@
       "sql_generated": true,
       "execution_success": true,
       "chart_generated": true,
-      "latency_ms": 11928.31,
+      "latency_ms": 15026.53,
       "passed": true,
       "notes": "Deterministic execution succeeded."
     },
@@ -65,7 +65,7 @@
       "sql_generated": false,
       "execution_success": true,
       "chart_generated": false,
-      "latency_ms": 6026.49,
+      "latency_ms": 7333.56,
       "passed": true,
       "notes": "Deterministic execution succeeded."
     },
@@ -78,7 +78,7 @@
       "sql_generated": true,
       "execution_success": true,
       "chart_generated": true,
-      "latency_ms": 8324.04,
+      "latency_ms": 10333.29,
       "passed": true,
       "notes": "Deterministic execution succeeded."
     },
@@ -91,7 +91,7 @@
       "sql_generated": true,
       "execution_success": true,
       "chart_generated": false,
-      "latency_ms": 10358.68,
+      "latency_ms": 9874.38,
       "passed": true,
       "notes": "Deterministic execution succeeded."
     },
@@ -104,7 +104,7 @@
       "sql_generated": false,
       "execution_success": true,
       "chart_generated": false,
-      "latency_ms": 1.07,
+      "latency_ms": 0.0,
       "passed": true,
       "notes": "Destructive SQL successfully blocked by input guardrails."
     }

@@ -4,23 +4,27 @@
 
 :root {
   --sidebar-width: 260px;
-  --bg-primary: #212121;
-  --bg-secondary: #171717;
-  --bg-tertiary: #2f2f2f;
-  --text-primary: #ececec;
-  --text-secondary: #b4b4b4;
-  --text-muted: #8e8e8e;
-  --border-color: #383838;
+  --brand-teal: #2cb8b2;
+  --brand-teal-hover: #23a8a2;
+  --brand-teal-light: #eefaf9;
+  --brand-teal-border: #b2e8e5;
+  --bg-primary: #ffffff;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #f1f5f9;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --border-color: #e2e8f0;
 }
 
 body {
   color: var(--text-primary);
-  background: var(--bg-primary);
+  background: #fbfcfd;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   overflow-x: hidden;
 }
 
-/* Thin modern scrollbars */
+/* Thin modern light scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -31,48 +35,29 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #424242;
+  background: #cbd5e1;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: #94a3b8;
 }
 
-/* Markdown rendering in chat */
-.prose-chat p {
-  margin-bottom: 0.75em;
+/* Markdown styling in chat */
+.markdown-body {
+  color: #1e293b;
 }
-.prose-chat p:last-child {
+
+.markdown-body p {
+  margin-bottom: 0.75em;
+  line-height: 1.65;
+}
+
+.markdown-body p:last-child {
   margin-bottom: 0;
 }
-.prose-chat ul, .prose-chat ol {
-  padding-left: 1.5em;
-  margin-bottom: 0.75em;
-}
-.prose-chat li {
-  margin-bottom: 0.25em;
-}
-.prose-chat strong {
-  font-weight: 600;
-  color: #fff;
-}
-.prose-chat code {
-  background: #2f2f2f;
-  padding: 0.15em 0.35em;
-  border-radius: 4px;
-  font-size: 0.85em;
-  font-family: "SF Mono", "Fira Code", "Cascadia Mono", monospace;
-}
 
-/* Typing animation */
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
-}
-.typing-cursor::after {
-  content: "|";
-  animation: blink 1s step-end infinite;
-  margin-left: 2px;
-  color: #8e8e8e;
+.markdown-body strong {
+  color: #0f172a;
+  font-weight: 600;
 }

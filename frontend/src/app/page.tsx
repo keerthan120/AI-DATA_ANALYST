@@ -21,6 +21,8 @@ import { ReasoningViewer } from "@/components/ReasoningViewer";
 import { ChartViewer } from "@/components/ChartViewer";
 import { AnomalyViewer } from "@/components/AnomalyViewer";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
+import { BrandLogo } from "@/components/BrandLogo";
+import { SettingsModal, AppSettings, DEFAULT_SETTINGS } from "@/components/SettingsModal";
 import {
   Send,
   Plus,
@@ -31,22 +33,20 @@ import {
   Copy,
   Check,
   Download,
-  FileText,
   PanelLeftClose,
   PanelLeft,
-  Database,
   Trash2,
   Upload,
   Sparkles,
   MessageSquare,
   Bot,
   User,
-  AlertCircle,
+  Settings as SettingsIcon,
   TrendingUp,
   FileSpreadsheet,
-  ShieldCheck,
-  LineChart as LineChartIcon,
   LogOut,
+  X,
+  FileText,
 } from "lucide-react";
 
 export default function Home() {
@@ -57,20 +57,31 @@ export default function Home() {
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeTabs, setActiveTabs] = useState<Record<string, "findings" | "chart" | "data" | "sql">>({});
   const [codeMode, setCodeMode] = useState<Record<string, "sql" | "pandas">>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
+  const [greetingText, setGreetingText] = useState("Welcome");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load user from localStorage (supports auth_user and data_analyst_user)
+  // Time-aware greeting
+  useEffect(() => {
+    const hour = new Date().getHours();
+    if (hour < 12) setGreetingText("Good morning");
+    else if (hour < 17) setGreetingText("Good afternoon");
+    else setGreetingText("Good evening");
+  }, []);
+
+  // Load user from localStorage
   useEffect(() => {
     try {
       const stored = localStorage.getItem("auth_user") || localStorage.getItem("data_analyst_user");
@@ -115,27 +126,26 @@ export default function Home() {
     );
 
     const suggestions: string[] = [];
-    suggestions.push(`Explain and provide an analytical overview of dataset '${t.table_name}'`);
     if (catCol && numCol) {
       suggestions.push(`Which ${catCol.name} generated the highest ${numCol.name}?`);
       suggestions.push(`What are the top 5 ${catCol.name}s by total ${numCol.name}?`);
     }
     if (dateCol && numCol) {
-      suggestions.push(`Show trend of ${numCol.name} over ${dateCol.name}`);
+      suggestions.push(`Show monthly trends of ${numCol.name} over time`);
       suggestions.push(`Forecast ${numCol.name} for the next 4 periods`);
     } else if (catCol) {
       suggestions.push(`Show distribution of records across ${catCol.name}`);
     }
     suggestions.push(`Run data quality and hygiene audit on ${t.table_name}`);
     if (numCol) {
-      suggestions.push(`Detect statistical anomalies and outliers in ${numCol.name}`);
+      suggestions.push(`Detect anomalies and statistical outliers in ${numCol.name}`);
     } else {
-      suggestions.push(`Detect statistical anomalies in this dataset`);
+      suggestions.push(`Detect anomalies in this dataset`);
     }
     setDynamicSuggestions(suggestions);
   };
 
-  // Load selected conversation from DB and scope tables to it
+  // Load selected conversation from DB
   useEffect(() => {
     if (!activeConvId) {
       setTables([]);
@@ -154,7 +164,6 @@ export default function Home() {
         }));
         setMessages(loaded);
 
-        // Fetch tables scoped to this conversation
         try {
           const convTables = await fetchTables(activeConvId);
           setTables(convTables);
@@ -187,45 +196,18 @@ export default function Home() {
     }
   }, [inputValue]);
 
-  // Handle CSV file upload strictly scoped to active or new conversation
-  const handleFileUpload = async (files: FileList | null) => {
+  // Handle CSV file selection / attachment
+  const handleFileSelect = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const csvFiles = Array.from(files).filter((f) => f.name.toLowerCase().endsWith(".csv"));
-    if (csvFiles.length === 0) {
-      setStatusNotice("Please upload valid CSV files (.csv).");
+    const file = files[0];
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      setStatusNotice("Please attach a valid CSV file (.csv).");
       setTimeout(() => setStatusNotice(null), 3000);
       return;
     }
-
-    setLoading(true);
-    setStatusNotice(`Uploading and profiling ${csvFiles.length} file(s)...`);
-    
-    // Ensure we have a conversation ID to scope files to
-    const targetConvId = activeConvId || `conv-${Date.now()}`;
-    if (!activeConvId) {
-      setActiveConvId(targetConvId);
-    }
-
-    try {
-      const updated = await uploadFiles(csvFiles, targetConvId);
-      setTables(updated);
-      updateDynamicSuggestions(updated);
-
-      const firstUploaded = updated[updated.length - 1] || updated[0];
-      setStatusNotice(`Successfully profiled '${firstUploaded.file_name}' into DuckDB for this chat.`);
-      setTimeout(() => setStatusNotice(null), 3000);
-
-      // Immediately trigger understanding and explanation for the uploaded file!
-      await handleSend(
-        `Explain and provide an analytical overview of the uploaded dataset '${firstUploaded.table_name}'.`,
-        targetConvId
-      );
-    } catch (err: any) {
-      setStatusNotice(`Upload error: ${err.message}`);
-      setTimeout(() => setStatusNotice(null), 5000);
-    } finally {
-      setLoading(false);
-    }
+    setAttachedFile(file);
+    setStatusNotice(`Attached '${file.name}'. Type your question or send to profile.`);
+    setTimeout(() => setStatusNotice(null), 3500);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -240,8 +222,8 @@ export default function Home() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    if (e.dataTransfer.files) {
-      handleFileUpload(e.dataTransfer.files);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileSelect(e.dataTransfer.files);
     }
   };
 
@@ -258,23 +240,51 @@ export default function Home() {
     }
   };
 
-  const handleSend = async (queryText?: string, explicitSessionId?: string) => {
-    const text = queryText || inputValue;
-    if (!text.trim() || loading) return;
+  const handleSend = async (queryText?: string) => {
+    const text = (queryText !== undefined ? queryText : inputValue).trim();
+    if (!text && !attachedFile) return;
+    if (loading) return;
 
-    const currentSessionId = explicitSessionId || activeConvId || `conv-${Date.now()}`;
+    const currentSessionId = activeConvId || `conv-${Date.now()}`;
     const timestampStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+    let activeTableList = [...tables];
+    let queryToSend = text;
+
+    setLoading(true);
+
+    // If a file is attached, upload it first to DuckDB scoped to this conversation!
+    if (attachedFile) {
+      const fileToUpload = attachedFile;
+      setAttachedFile(null);
+      setStatusNotice(`Uploading and profiling '${fileToUpload.name}' into DuckDB...`);
+
+      try {
+        const uploadedTables = await uploadFiles([fileToUpload], currentSessionId);
+        activeTableList = uploadedTables;
+        setTables(uploadedTables);
+        updateDynamicSuggestions(uploadedTables);
+
+        if (!queryToSend) {
+          queryToSend = `Explain and provide an analytical overview of the uploaded dataset '${uploadedTables[0].table_name}'.`;
+        }
+      } catch (err: any) {
+        setStatusNotice(`Upload error: ${err.message}`);
+        setTimeout(() => setStatusNotice(null), 4000);
+        setLoading(false);
+        return;
+      }
+    }
 
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: "user",
-      content: text,
+      content: queryToSend,
       timestamp: timestampStr,
     };
 
     setMessages((prev) => [...prev, userMsg]);
-    if (!queryText) setInputValue("");
-    setLoading(true);
+    if (queryText === undefined) setInputValue("");
 
     try {
       const history = messages
@@ -282,10 +292,22 @@ export default function Home() {
         .slice(-6)
         .map((m) => ({ role: m.role, content: m.content }));
 
+      // Load settings from localStorage if set
+      let customKey: string | undefined = undefined;
+      let customModel: string | undefined = undefined;
+      try {
+        const storedSettings = localStorage.getItem("analyst_settings");
+        if (storedSettings) {
+          const s: AppSettings = JSON.parse(storedSettings);
+          if (s.apiKey) customKey = s.apiKey;
+          if (s.model) customModel = s.model;
+        }
+      } catch {}
+
       const responsePayload = await sendChatMessage({
         sessionId: currentSessionId,
-        message: text,
-        tableNames: tables.map((t) => t.table_name),
+        message: queryToSend,
+        tableNames: activeTableList.map((t) => t.table_name),
         userId: user?.id,
         conversationHistory: history,
       });
@@ -300,7 +322,6 @@ export default function Home() {
 
       setMessages((prev) => [...prev, assistantMsg]);
 
-      // Set active conversation and refresh conversation list from database
       if (!activeConvId) {
         setActiveConvId(responsePayload.session_id);
       }
@@ -329,6 +350,7 @@ export default function Home() {
     setActiveConvId(null);
     setMessages([]);
     setTables([]);
+    setAttachedFile(null);
     setDynamicSuggestions([]);
   };
 
@@ -370,9 +392,9 @@ export default function Home() {
   const exportAnalysisReport = () => {
     if (messages.length === 0) return;
     let md = `# Executive Data Analysis Report\n`;
-    md += `*Generated by AI Data Analyst on ${new Date().toLocaleString()}*\n\n`;
+    md += `*Generated by Digital Back Office AI Data Analyst on ${new Date().toLocaleString()}*\n\n`;
     if (tables.length > 0) {
-      md += `## Active Datasets\n`;
+      md += `## Analyzed Datasets\n`;
       tables.forEach((t) => {
         md += `- **${t.file_name}** (${t.row_count.toLocaleString()} rows, ${t.column_count} columns)\n`;
       });
@@ -398,55 +420,71 @@ export default function Home() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `analysis_report_${Date.now()}.md`);
+    link.setAttribute("download", `dbo_analysis_report_${Date.now()}.md`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
+  const userName = user?.full_name || (user?.email ? user.email.split("@")[0] : "Analyst");
+
   return (
-    <div className="h-screen flex overflow-hidden bg-[#212121] text-[#ececec]">
+    <div className="h-screen flex overflow-hidden bg-[#fbfcfd] text-[#0f172a]">
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={() => {
+          setStatusNotice("Settings saved successfully.");
+          setTimeout(() => setStatusNotice(null), 2500);
+        }}
+      />
+
       {/* Hidden File Input */}
       <input
         ref={fileInputRef}
         type="file"
-        multiple
         accept=".csv"
         className="hidden"
-        onChange={(e) => handleFileUpload(e.target.files)}
+        onChange={(e) => handleFileSelect(e.target.files)}
       />
 
-      {/* LEFT SIDEBAR (ChatGPT Style #171717) */}
+      {/* LEFT SIDEBAR (Clean Light Theme #f8fafc) */}
       <aside
         className={`${
           sidebarOpen ? "w-[260px]" : "w-0"
-        } bg-[#171717] border-r border-[#2f2f2f] flex flex-col transition-all duration-200 overflow-hidden shrink-0 z-20`}
+        } bg-[#f8fafc] border-r border-[#e2e8f0] flex flex-col transition-all duration-200 overflow-hidden shrink-0 z-20`}
       >
-        {/* Top: New Chat Button */}
+        {/* Top: Brand Logo */}
+        <div className="p-4 border-b border-[#e2e8f0] bg-white">
+          <BrandLogo size="md" showText={true} />
+        </div>
+
+        {/* Top Action: New Analysis Button */}
         <div className="p-3">
           <button
             onClick={startNewChat}
-            className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border border-[#383838] bg-[#212121] hover:bg-[#2f2f2f] text-sm font-medium text-[#ececec] transition group"
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-[#e2e8f0] bg-white hover:border-[#2cb8b2] hover:bg-[#eefaf9] text-xs font-semibold text-[#0f172a] transition shadow-xs group"
           >
             <div className="flex items-center gap-2">
-              <Plus className="w-4 h-4 text-[#8e8e8e] group-hover:text-white" />
+              <Plus className="w-4 h-4 text-[#2cb8b2] group-hover:scale-110 transition" />
               <span>New analysis</span>
             </div>
-            <span className="text-[10px] text-[#6b6b6b] border border-[#383838] px-1 rounded">⌘K</span>
+            <span className="text-[10px] text-[#94a3b8] border border-[#e2e8f0] bg-[#f8fafc] px-1.5 py-0.5 rounded font-mono">⌘K</span>
           </button>
         </div>
 
-        {/* Database Conversations List (Recent Chats) */}
+        {/* Recent Chats List */}
         <div className="flex-1 overflow-y-auto px-2 space-y-0.5 scrollbar-thin">
-          <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#6b6b6b] flex items-center justify-between">
+          <div className="px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#64748b] flex items-center justify-between">
             <span>Recent Chats</span>
-            <span className="text-[10px] font-normal text-[#8e8e8e]">
+            <span className="text-[10px] font-normal text-[#94a3b8]">
               {conversations.length}
             </span>
           </div>
 
           {conversations.length === 0 ? (
-            <p className="text-xs text-[#6b6b6b] text-center mt-6 px-4">
+            <p className="text-xs text-[#94a3b8] text-center mt-6 px-4 leading-relaxed">
               No saved analyses yet. Queries are saved to your database automatically.
             </p>
           ) : (
@@ -454,19 +492,19 @@ export default function Home() {
               <div
                 key={conv.id}
                 onClick={() => setActiveConvId(conv.id)}
-                className={`group flex items-center justify-between px-2.5 py-2 rounded-lg text-xs cursor-pointer transition ${
+                className={`group flex items-center justify-between px-2.5 py-2 rounded-xl text-xs cursor-pointer transition ${
                   activeConvId === conv.id
-                    ? "bg-[#2f2f2f] text-[#ececec] font-medium"
-                    : "text-[#b4b4b4] hover:bg-[#212121] hover:text-[#ececec]"
+                    ? "bg-white text-[#0f172a] font-medium border border-[#e2e8f0] shadow-xs"
+                    : "text-[#475569] hover:bg-white hover:text-[#0f172a]"
                 }`}
               >
                 <div className="flex items-center gap-2 truncate">
-                  <MessageSquare className="w-3.5 h-3.5 shrink-0 text-[#8e8e8e]" />
+                  <MessageSquare className="w-3.5 h-3.5 shrink-0 text-[#94a3b8] group-hover:text-[#2cb8b2] transition" />
                   <span className="truncate">{conv.title || "Untitled Analysis"}</span>
                 </div>
                 <button
                   onClick={(e) => handleDeleteConversation(e, conv.id)}
-                  className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 text-[#8e8e8e] transition rounded"
+                  className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-500 text-[#94a3b8] transition rounded"
                   title="Delete from database"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -476,156 +514,133 @@ export default function Home() {
           )}
         </div>
 
-        {/* Active Datasets Section for THIS Chat */}
-        <div className="border-t border-[#2f2f2f] p-3 space-y-2 bg-[#171717]">
-          <div className="flex items-center justify-between text-xs text-[#8e8e8e]">
-            <div className="flex items-center gap-1.5 font-medium">
-              <Database className="w-3.5 h-3.5" />
-              <span>Chat Files ({tables.length})</span>
-            </div>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1 text-[11px] text-emerald-400 hover:text-emerald-300 transition"
-              title="Upload CSV to this chat"
-            >
-              <Upload className="w-3 h-3" />
-              <span>Upload CSV</span>
-            </button>
-          </div>
-
-          {tables.length > 0 ? (
-            <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
-              {tables.map((t) => (
-                <div
-                  key={t.table_name}
-                  onClick={() =>
-                    handleSend(`Explain and provide an analytical overview of dataset '${t.table_name}'`)
-                  }
-                  className="flex items-center justify-between px-2 py-1.5 rounded bg-[#212121] border border-[#2f2f2f] text-xs text-[#b4b4b4] hover:text-[#ececec] hover:border-[#383838] cursor-pointer transition"
-                  title="Click to profile this table"
-                >
-                  <div className="flex items-center gap-1.5 truncate">
-                    <FileSpreadsheet className="w-3 h-3 text-emerald-400 shrink-0" />
-                    <span className="truncate font-mono text-[11px]">{t.file_name}</span>
-                  </div>
-                  <span className="text-[10px] text-[#6b6b6b] shrink-0 font-mono">
-                    {t.row_count.toLocaleString()}r
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-[11px] text-[#6b6b6b] italic">No CSVs uploaded in this chat yet.</p>
-          )}
-        </div>
-
-        {/* User Profile Bar */}
-        <div className="border-t border-[#2f2f2f] p-3 flex items-center justify-between bg-[#171717]">
+        {/* User Profile & Settings Bar (Clean Light Footer) */}
+        <div className="border-t border-[#e2e8f0] p-3 flex items-center justify-between bg-white">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-full bg-[#2f2f2f] border border-[#383838] flex items-center justify-center text-xs font-semibold text-[#ececec] shrink-0">
-              <User className="w-4 h-4 text-[#ececec]" />
+            <div className="w-8 h-8 rounded-full bg-[#eefaf9] border border-[#b2e8e5] flex items-center justify-center text-xs font-semibold text-[#2cb8b2] shrink-0">
+              <User className="w-4 h-4 text-[#2cb8b2]" />
             </div>
             <div className="min-w-0">
-              <p className="text-xs font-medium text-[#ececec] truncate">
-                {user ? (user.full_name || user.email) : "Guest Analyst"}
+              <p className="text-xs font-semibold text-[#0f172a] truncate capitalize">
+                {userName}
               </p>
-              <div className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <p className="text-[10px] text-[#8e8e8e] truncate">PostgreSQL Persistent</p>
-              </div>
+              <p className="text-[10px] text-[#64748b] truncate">
+                {user ? user.email : "Enterprise Workspace"}
+              </p>
             </div>
           </div>
-          {user ? (
+
+          <div className="flex items-center gap-1">
             <button
-              onClick={handleSignOut}
-              className="p-1.5 text-[#8e8e8e] hover:text-[#ececec] transition rounded hover:bg-[#212121]"
-              title="Sign out"
+              onClick={() => setSettingsOpen(true)}
+              className="p-1.5 text-[#64748b] hover:text-[#0f172a] hover:bg-[#f1f5f9] rounded-lg transition"
+              title="Settings & Configuration"
             >
-              <LogOut className="w-3.5 h-3.5" />
+              <SettingsIcon className="w-4 h-4" />
             </button>
-          ) : (
-            <Link
-              href="/login"
-              className="text-[11px] text-[#8e8e8e] hover:text-[#ececec] transition px-2 py-1 rounded hover:bg-[#212121]"
-            >
-              Sign In
-            </Link>
-          )}
+            {user ? (
+              <button
+                onClick={handleSignOut}
+                className="p-1.5 text-[#64748b] hover:text-red-600 hover:bg-[#f1f5f9] rounded-lg transition"
+                title="Sign out"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            ) : (
+              <Link
+                href="/login"
+                className="text-[11px] font-medium text-[#2cb8b2] hover:text-[#23a8a2] transition px-2 py-1 rounded hover:bg-[#eefaf9]"
+              >
+                Sign In
+              </Link>
+            )}
+          </div>
         </div>
       </aside>
 
-      {/* MAIN CANVAS */}
-      <main className="flex-1 flex flex-col h-screen min-w-0 bg-[#212121] relative">
+      {/* MAIN CANVAS (Light Canvas) */}
+      <main className="flex-1 flex flex-col h-screen min-w-0 bg-[#fbfcfd] relative">
         {/* Top Header */}
-        <header className="h-12 border-b border-[#2f2f2f] flex items-center justify-between px-4 bg-[#212121] shrink-0 z-10">
+        <header className="h-14 border-b border-[#e2e8f0] flex items-center justify-between px-4 bg-white shrink-0 z-10 shadow-2xs">
           <div className="flex items-center gap-3">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="p-1.5 rounded-lg text-[#8e8e8e] hover:text-[#ececec] hover:bg-[#2f2f2f] transition"
+              className="p-1.5 rounded-lg text-[#64748b] hover:text-[#0f172a] hover:bg-[#f1f5f9] transition"
               title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
             >
               {sidebarOpen ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeft className="w-4 h-4" />}
             </button>
             <div className="flex items-center gap-2">
-              <span className="font-semibold text-sm text-[#ececec]">Data Analyst</span>
-              <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#2f2f2f] border border-[#383838] text-[#8e8e8e]">
-                DuckDB + LangGraph
+              <span className="font-bold text-sm text-[#0f172a]">AI Data Analyst</span>
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#eefaf9] border border-[#b2e8e5] text-[#0f766e] font-medium">
+                Digital Back Office
               </span>
             </div>
           </div>
 
+          {/* Right Header Controls */}
           <div className="flex items-center gap-2">
             {messages.length > 0 && (
               <button
                 onClick={exportAnalysisReport}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#383838] bg-[#2f2f2f] hover:bg-[#383838] text-xs font-medium text-[#ececec] transition"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] hover:bg-white hover:border-[#cbd5e1] text-xs font-medium text-[#334155] transition shadow-xs"
                 title="Download complete report as Markdown"
               >
-                <Download className="w-3.5 h-3.5 text-[#8e8e8e]" />
+                <Download className="w-3.5 h-3.5 text-[#2cb8b2]" />
                 <span>Export Report</span>
               </button>
             )}
+
             <button
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#383838] bg-[#2f2f2f] hover:bg-[#383838] text-xs font-medium text-[#ececec] transition"
+              onClick={() => setSettingsOpen(true)}
+              className="p-2 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] hover:bg-white text-[#64748b] hover:text-[#0f172a] transition shadow-xs"
+              title="Settings"
             >
-              <Upload className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Upload CSV</span>
+              <SettingsIcon className="w-4 h-4" />
             </button>
           </div>
         </header>
 
         {/* Status Notification Banner */}
         {statusNotice && (
-          <div className="bg-[#2f2f2f] border-b border-[#383838] px-4 py-2 text-xs text-[#ececec] flex items-center justify-between animate-fadeIn shrink-0">
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+          <div className="bg-[#eefaf9] border-b border-[#b2e8e5] px-4 py-2 text-xs text-[#0f766e] flex items-center justify-between animate-fadeIn shrink-0">
+            <div className="flex items-center gap-2 font-medium">
+              <Sparkles className="w-3.5 h-3.5 text-[#2cb8b2]" />
               <span>{statusNotice}</span>
             </div>
             <button
               onClick={() => setStatusNotice(null)}
-              className="text-[#8e8e8e] hover:text-white text-sm leading-none"
+              className="text-[#0f766e] hover:text-[#0f172a] text-sm leading-none"
             >
               ×
             </button>
           </div>
         )}
 
-        {/* Central Chat / Empty State Container */}
+        {/* Central Chat / Message Thread Container */}
         <div className="flex-1 overflow-y-auto px-4 py-6">
           <div className="max-w-3xl mx-auto space-y-6">
-            {/* If no messages: Display ChatGPT Hero & Prominent CSV Dropzone */}
+            {/* If no messages: Display Personalized Greeting & Digital Back Office Welcome Card */}
             {messages.length === 0 ? (
-              <div className="flex flex-col items-center justify-center min-h-[60vh] text-center pt-8 pb-12">
-                <div className="w-12 h-12 rounded-2xl bg-[#2f2f2f] border border-[#383838] flex items-center justify-center mb-4 shadow-lg">
-                  <Bot className="w-6 h-6 text-[#10a37f]" />
+              <div className="flex flex-col items-center justify-center min-h-[60vh] text-center pt-6 pb-12">
+                {/* Greeting pill */}
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#eefaf9] border border-[#b2e8e5] text-xs font-semibold text-[#0f766e] mb-4">
+                  <span className="w-2 h-2 rounded-full bg-[#2cb8b2] animate-pulse"></span>
+                  <span>{greetingText}, {userName}! 👋</span>
                 </div>
-                <h1 className="text-2xl font-semibold text-[#ececec] mb-2">
+
+                <div className="w-14 h-14 rounded-2xl bg-[#2cb8b2] flex items-center justify-center mb-4 shadow-md text-white">
+                  <div className="w-10 h-10 rounded-full border-2 border-white flex items-center justify-center font-bold text-lg tracking-tight">
+                    DB
+                  </div>
+                </div>
+
+                <h1 className="text-2xl font-bold text-[#0f172a] mb-2 tracking-tight">
                   What would you like to analyze today?
                 </h1>
-                <p className="text-sm text-[#8e8e8e] max-w-md mb-8">
-                  Upload one or more CSV files for this conversation. The AI Data Analyst will immediately
-                  understand the structure, evaluate data quality, and generate actionable insights.
+                <p className="text-sm text-[#64748b] max-w-lg mb-8 leading-relaxed">
+                  Upload CSV files or ask questions in natural language. Digital Back Office AI Data Analyst
+                  generates deterministic SQL, interactive charts, statistical anomaly audits, and executive summaries.
                 </p>
 
                 {/* Drag & Drop Upload Zone */}
@@ -636,26 +651,26 @@ export default function Home() {
                   onClick={() => fileInputRef.current?.click()}
                   className={`w-full max-w-xl p-8 rounded-2xl border-2 border-dashed transition cursor-pointer flex flex-col items-center justify-center ${
                     isDragging
-                      ? "border-emerald-500 bg-emerald-500/10"
-                      : "border-[#383838] hover:border-[#555] bg-[#2f2f2f]/40 hover:bg-[#2f2f2f]/70"
+                      ? "border-[#2cb8b2] bg-[#eefaf9]"
+                      : "border-[#cbd5e1] hover:border-[#2cb8b2] bg-white hover:bg-[#fbfdfd] shadow-sm"
                   }`}
                 >
-                  <div className="w-12 h-12 rounded-full bg-[#2f2f2f] border border-[#383838] flex items-center justify-center mb-3">
-                    <Upload className="w-5 h-5 text-emerald-400" />
+                  <div className="w-12 h-12 rounded-full bg-[#eefaf9] border border-[#b2e8e5] flex items-center justify-center mb-3">
+                    <Upload className="w-5 h-5 text-[#2cb8b2]" />
                   </div>
-                  <p className="text-sm font-medium text-[#ececec] mb-1">
-                    Drag and drop your CSV file(s) here, or <span className="text-emerald-400 underline">browse</span>
+                  <p className="text-sm font-semibold text-[#0f172a] mb-1">
+                    Drag and drop your CSV file here, or <span className="text-[#2cb8b2] underline">browse</span>
                   </p>
-                  <p className="text-xs text-[#8e8e8e]">
-                    Files uploaded belong strictly to this conversation. Supports multi-file joins, forecasting & anomalies.
+                  <p className="text-xs text-[#64748b]">
+                    You can also attach CSV files directly in the chat input below!
                   </p>
                 </div>
 
                 {/* Dynamic Suggestion Chips if a dataset is already registered */}
                 {dynamicSuggestions.length > 0 && (
                   <div className="w-full max-w-xl mt-8">
-                    <div className="flex items-center gap-1.5 text-xs text-[#8e8e8e] mb-3 justify-center">
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                    <div className="flex items-center gap-1.5 text-xs font-semibold text-[#64748b] mb-3 justify-center">
+                      <Sparkles className="w-3.5 h-3.5 text-[#2cb8b2]" />
                       <span>Suggested analytical questions for active dataset:</span>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
@@ -663,9 +678,9 @@ export default function Home() {
                         <button
                           key={idx}
                           onClick={() => handleSend(promptText)}
-                          className="p-3 rounded-xl border border-[#383838] bg-[#2f2f2f]/60 hover:bg-[#2f2f2f] hover:border-[#555] text-xs text-[#ececec] transition group flex items-start gap-2"
+                          className="p-3 rounded-xl border border-[#e2e8f0] bg-white hover:border-[#2cb8b2] hover:bg-[#eefaf9] text-xs text-[#0f172a] transition group flex items-start gap-2 shadow-xs"
                         >
-                          <TrendingUp className="w-3.5 h-3.5 text-[#8e8e8e] group-hover:text-emerald-400 shrink-0 mt-0.5" />
+                          <TrendingUp className="w-3.5 h-3.5 text-[#94a3b8] group-hover:text-[#2cb8b2] shrink-0 mt-0.5" />
                           <span className="line-clamp-2">{promptText}</span>
                         </button>
                       ))}
@@ -683,9 +698,9 @@ export default function Home() {
                 if (msg.role === "user") {
                   return (
                     <div key={msg.id} className="flex justify-end">
-                      <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-[#2f2f2f] text-[#ececec] text-sm leading-relaxed border border-[#383838]">
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
-                        <span className="block text-[10px] text-[#8e8e8e] mt-1.5 text-right font-mono">
+                      <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-[#eefaf9] text-[#0f172a] text-sm leading-relaxed border border-[#b2e8e5] shadow-xs">
+                        <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
+                        <span className="block text-[10px] text-[#0f766e] mt-1.5 text-right font-mono">
                           {msg.timestamp}
                         </span>
                       </div>
@@ -695,9 +710,9 @@ export default function Home() {
 
                 // Assistant Response
                 return (
-                  <div key={msg.id} className="flex gap-3 text-sm text-[#ececec]">
-                    <div className="w-7 h-7 rounded-full bg-[#10a37f] flex items-center justify-center shrink-0 text-white mt-0.5 shadow-sm">
-                      <Bot className="w-4 h-4" />
+                  <div key={msg.id} className="flex gap-3 text-sm text-[#0f172a]">
+                    <div className="w-8 h-8 rounded-xl bg-[#2cb8b2] flex items-center justify-center shrink-0 text-white mt-0.5 shadow-sm font-bold text-xs tracking-tight">
+                      DB
                     </div>
 
                     <div className="flex-1 space-y-4 min-w-0">
@@ -709,24 +724,24 @@ export default function Home() {
                         />
                       )}
 
-                      {/* Natural Language Answer / Dataset Overview */}
-                      <div className="bg-[#282828] p-5 rounded-xl border border-[#333]">
+                      {/* Natural Language Answer / Dataset Overview via MarkdownRenderer */}
+                      <div className="bg-white p-5 rounded-2xl border border-[#e2e8f0] shadow-sm">
                         <MarkdownRenderer content={msg.content} />
                       </div>
 
                       {/* Strategic Insights Cards */}
                       {payload?.insights && payload.insights.length > 0 && (
                         <div className="space-y-1.5">
-                          <p className="text-[11px] font-semibold text-[#8e8e8e] uppercase tracking-wider">
+                          <p className="text-[11px] font-semibold text-[#64748b] uppercase tracking-wider">
                             Key Analytical Insights
                           </p>
                           <div className="grid grid-cols-1 gap-2">
                             {payload.insights.map((insight, idx) => (
                               <div
                                 key={idx}
-                                className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg bg-[#282828] border border-[#383838] text-xs text-[#ececec]"
+                                className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl bg-white border border-[#e2e8f0] text-xs text-[#0f172a] shadow-xs"
                               >
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0 mt-1.5"></span>
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#2cb8b2] shrink-0 mt-1.5"></span>
                                 <span className="leading-relaxed">{insight}</span>
                               </div>
                             ))}
@@ -736,16 +751,16 @@ export default function Home() {
 
                       {/* Interactive Tab Navigation */}
                       {payload && (
-                        <div className="rounded-xl border border-[#383838] bg-[#282828] overflow-hidden">
-                          <div className="flex items-center justify-between border-b border-[#383838] px-3 bg-[#212121]">
+                        <div className="rounded-2xl border border-[#e2e8f0] bg-white overflow-hidden shadow-sm">
+                          <div className="flex items-center justify-between border-b border-[#e2e8f0] px-3 bg-[#f8fafc]">
                             <div className="flex space-x-1">
                               {payload.chart && payload.chart.type !== "none" && (
                                 <button
                                   onClick={() => setActiveTabs((p) => ({ ...p, [msg.id]: "chart" }))}
-                                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition ${
+                                  className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition ${
                                     activeTab === "chart"
-                                      ? "border-emerald-400 text-emerald-400"
-                                      : "border-transparent text-[#8e8e8e] hover:text-[#ececec]"
+                                      ? "border-[#2cb8b2] text-[#2cb8b2]"
+                                      : "border-transparent text-[#64748b] hover:text-[#0f172a]"
                                   }`}
                                 >
                                   <BarChart2 className="w-3.5 h-3.5" />
@@ -756,10 +771,10 @@ export default function Home() {
                               {payload.data_preview && payload.data_preview.length > 0 && (
                                 <button
                                   onClick={() => setActiveTabs((p) => ({ ...p, [msg.id]: "data" }))}
-                                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition ${
+                                  className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition ${
                                     activeTab === "data" || (!payload.chart && activeTab === "findings")
-                                      ? "border-emerald-400 text-emerald-400"
-                                      : "border-transparent text-[#8e8e8e] hover:text-[#ececec]"
+                                      ? "border-[#2cb8b2] text-[#2cb8b2]"
+                                      : "border-transparent text-[#64748b] hover:text-[#0f172a]"
                                   }`}
                                 >
                                   <Table className="w-3.5 h-3.5" />
@@ -770,10 +785,10 @@ export default function Home() {
                               {(payload.sql_query || payload.python_code) && (
                                 <button
                                   onClick={() => setActiveTabs((p) => ({ ...p, [msg.id]: "sql" }))}
-                                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition ${
+                                  className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition ${
                                     activeTab === "sql"
-                                      ? "border-emerald-400 text-emerald-400"
-                                      : "border-transparent text-[#8e8e8e] hover:text-[#ececec]"
+                                      ? "border-[#2cb8b2] text-[#2cb8b2]"
+                                      : "border-transparent text-[#64748b] hover:text-[#0f172a]"
                                   }`}
                                 >
                                   <Code2 className="w-3.5 h-3.5" />
@@ -786,10 +801,10 @@ export default function Home() {
                             {payload.data_preview && payload.data_preview.length > 0 && (
                               <button
                                 onClick={() => exportCSV(payload.data_preview, `analysis_${Date.now()}.csv`)}
-                                className="flex items-center gap-1 text-[11px] text-[#8e8e8e] hover:text-[#ececec] transition px-2 py-1 rounded"
+                                className="flex items-center gap-1 text-[11px] font-medium text-[#64748b] hover:text-[#0f172a] transition px-2 py-1 rounded"
                                 title="Export results to CSV"
                               >
-                                <Download className="w-3 h-3" />
+                                <Download className="w-3 h-3 text-[#2cb8b2]" />
                                 <span>Export CSV</span>
                               </button>
                             )}
@@ -810,21 +825,21 @@ export default function Home() {
                               payload.data_preview &&
                               payload.data_preview.length > 0 && (
                                 <div className="overflow-x-auto max-h-72 scrollbar-thin">
-                                  <table className="w-full text-left text-xs border-collapse font-sans">
+                                  <table className="w-full text-left text-xs border-collapse">
                                     <thead>
-                                      <tr className="border-b border-[#383838] bg-[#212121] text-[#8e8e8e]">
+                                      <tr className="border-b border-[#e2e8f0] bg-[#f8fafc] text-[#475569]">
                                         {Object.keys(payload.data_preview[0]).map((h) => (
-                                          <th key={h} className="px-3 py-2 font-medium">
+                                          <th key={h} className="px-3.5 py-2 font-semibold">
                                             {h}
                                           </th>
                                         ))}
                                       </tr>
                                     </thead>
-                                    <tbody className="divide-y divide-[#383838]">
+                                    <tbody className="divide-y divide-[#e2e8f0]">
                                       {payload.data_preview.map((row, rIdx) => (
-                                        <tr key={rIdx} className="hover:bg-[#212121]/50">
+                                        <tr key={rIdx} className="hover:bg-[#f8fafc]">
                                           {Object.keys(payload.data_preview[0]).map((h) => (
-                                            <td key={h} className="px-3 py-2 text-[#ececec]">
+                                            <td key={h} className="px-3.5 py-2 text-[#334155]">
                                               {typeof row[h] === "number"
                                                 ? row[h].toLocaleString()
                                                 : String(row[h] !== null && row[h] !== undefined ? row[h] : "")}
@@ -844,20 +859,20 @@ export default function Home() {
                                   <div className="flex gap-2">
                                     <button
                                       onClick={() => setCodeMode((p) => ({ ...p, [msg.id]: "sql" }))}
-                                      className={`px-2.5 py-1 text-xs rounded font-medium transition ${
+                                      className={`px-2.5 py-1 text-xs rounded-lg font-medium transition ${
                                         !isPandas
-                                          ? "bg-[#383838] text-white"
-                                          : "text-[#8e8e8e] hover:text-white"
+                                          ? "bg-[#2cb8b2] text-white shadow-xs"
+                                          : "text-[#64748b] hover:text-[#0f172a] bg-[#f1f5f9]"
                                       }`}
                                     >
                                       DuckDB SQL
                                     </button>
                                     <button
                                       onClick={() => setCodeMode((p) => ({ ...p, [msg.id]: "pandas" }))}
-                                      className={`px-2.5 py-1 text-xs rounded font-medium transition ${
+                                      className={`px-2.5 py-1 text-xs rounded-lg font-medium transition ${
                                         isPandas
-                                          ? "bg-[#383838] text-white"
-                                          : "text-[#8e8e8e] hover:text-white"
+                                          ? "bg-[#2cb8b2] text-white shadow-xs"
+                                          : "text-[#64748b] hover:text-[#0f172a] bg-[#f1f5f9]"
                                       }`}
                                     >
                                       Pandas (Python)
@@ -873,12 +888,12 @@ export default function Home() {
                                         msg.id
                                       )
                                     }
-                                    className="flex items-center gap-1 text-xs text-[#8e8e8e] hover:text-[#ececec] transition px-2 py-1 rounded bg-[#212121] border border-[#383838]"
+                                    className="flex items-center gap-1 text-xs text-[#64748b] hover:text-[#0f172a] transition px-2.5 py-1 rounded-lg bg-[#f8fafc] border border-[#e2e8f0]"
                                   >
                                     {copiedId === msg.id ? (
                                       <>
-                                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                                        <span className="text-emerald-400">Copied</span>
+                                        <Check className="w-3.5 h-3.5 text-[#2cb8b2]" />
+                                        <span className="text-[#2cb8b2] font-medium">Copied</span>
                                       </>
                                     ) : (
                                       <>
@@ -889,7 +904,7 @@ export default function Home() {
                                   </button>
                                 </div>
 
-                                <pre className="p-3 rounded-lg bg-[#1a1a1a] border border-[#333] text-xs font-mono text-emerald-300 overflow-x-auto leading-relaxed">
+                                <pre className="p-3.5 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] text-xs font-mono text-[#0f172a] overflow-x-auto leading-relaxed shadow-inner">
                                   <code>
                                     {isPandas
                                       ? payload.python_code || "# No Pandas code generated"
@@ -914,24 +929,24 @@ export default function Home() {
 
             {/* Loading Indicator */}
             {loading && (
-              <div className="flex gap-3 text-sm text-[#ececec]">
-                <div className="w-7 h-7 rounded-full bg-[#10a37f] flex items-center justify-center shrink-0 text-white">
-                  <Bot className="w-4 h-4 animate-spin" />
+              <div className="flex gap-3 text-sm text-[#0f172a]">
+                <div className="w-8 h-8 rounded-xl bg-[#2cb8b2] flex items-center justify-center shrink-0 text-white font-bold text-xs">
+                  DB
                 </div>
-                <div className="p-4 rounded-xl bg-[#282828] border border-[#383838] flex items-center gap-3">
+                <div className="p-4 rounded-2xl bg-white border border-[#e2e8f0] flex items-center gap-3 shadow-sm">
                   <div className="flex space-x-1">
-                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"></div>
+                    <div className="w-2 h-2 rounded-full bg-[#2cb8b2] animate-bounce"></div>
                     <div
-                      className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"
+                      className="w-2 h-2 rounded-full bg-[#2cb8b2] animate-bounce"
                       style={{ animationDelay: "0.15s" }}
                     ></div>
                     <div
-                      className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce"
+                      className="w-2 h-2 rounded-full bg-[#2cb8b2] animate-bounce"
                       style={{ animationDelay: "0.3s" }}
                     ></div>
                   </div>
-                  <span className="text-xs text-[#8e8e8e]">
-                    Profiling schema, executing DuckDB query, and generating insights...
+                  <span className="text-xs text-[#64748b]">
+                    Profiling schema, executing query in DuckDB, and synthesizing business takeaways...
                   </span>
                 </div>
               </div>
@@ -941,15 +956,46 @@ export default function Home() {
           </div>
         </div>
 
-        {/* BOTTOM FLOATING INPUT BOX (ChatGPT Style) */}
-        <div className="p-4 bg-[#212121] shrink-0">
+        {/* BOTTOM FLOATING INPUT BOX WITH CHATBOX CSV UPLOAD */}
+        <div className="p-4 bg-white border-t border-[#e2e8f0] shrink-0">
           <div className="max-w-3xl mx-auto">
-            <div className="relative flex items-end gap-2 bg-[#2f2f2f] rounded-2xl border border-[#383838] focus-within:border-[#555] p-2 transition shadow-lg">
+            {/* Attached CSV File Badge */}
+            {attachedFile && (
+              <div className="mb-2 flex items-center gap-2 p-2 px-3 rounded-xl bg-[#eefaf9] border border-[#b2e8e5] text-xs text-[#0f766e] animate-fadeIn w-fit">
+                <FileSpreadsheet className="w-4 h-4 text-[#2cb8b2] shrink-0" />
+                <span className="font-semibold">{attachedFile.name}</span>
+                <span className="text-[11px] text-[#0d9488]">
+                  ({(attachedFile.size / 1024).toFixed(1)} KB)
+                </span>
+                <button
+                  onClick={() => setAttachedFile(null)}
+                  className="ml-2 text-[#0f766e] hover:text-red-500 rounded p-0.5"
+                  title="Remove attachment"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`relative flex items-end gap-2 bg-[#f8fafc] rounded-2xl border transition p-2 shadow-xs ${
+                isDragging
+                  ? "border-[#2cb8b2] bg-[#eefaf9]"
+                  : "border-[#cbd5e1] focus-within:border-[#2cb8b2] focus-within:ring-1 focus-within:ring-[#2cb8b2]"
+              }`}
+            >
               {/* File Attachment Button */}
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="p-2.5 rounded-full text-[#8e8e8e] hover:text-[#ececec] hover:bg-[#383838] transition shrink-0"
-                title="Upload CSV to this chat"
+                className={`p-2.5 rounded-full transition shrink-0 ${
+                  attachedFile
+                    ? "bg-[#2cb8b2] text-white"
+                    : "text-[#64748b] hover:text-[#0f172a] hover:bg-[#e2e8f0]"
+                }`}
+                title="Attach CSV file to prompt"
               >
                 <Paperclip className="w-4 h-4" />
               </button>
@@ -961,23 +1007,25 @@ export default function Home() {
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  tables.length > 0
-                    ? `Ask anything about ${tables.map(t => t.file_name).join(", ")}...`
-                    : "Say 'hi', upload CSVs, or ask any data analysis question..."
+                  attachedFile
+                    ? `Ask about '${attachedFile.name}' or press send to analyze...`
+                    : tables.length > 0
+                    ? `Ask anything about ${tables.map((t) => t.file_name).join(", ")}...`
+                    : "Attach a CSV or ask any data analysis question..."
                 }
                 rows={1}
                 disabled={loading}
-                className="w-full bg-transparent text-sm text-[#ececec] placeholder-[#6b6b6b] resize-none focus:outline-none py-2 px-1 max-h-[180px] disabled:opacity-50 leading-relaxed font-sans"
+                className="w-full bg-transparent text-sm text-[#0f172a] placeholder-[#94a3b8] resize-none focus:outline-none py-2 px-1 max-h-[180px] disabled:opacity-50 leading-relaxed font-sans"
               />
 
               {/* Send Button */}
               <button
                 onClick={() => handleSend()}
-                disabled={loading || !inputValue.trim()}
-                className={`p-2.5 rounded-full transition shrink-0 ${
-                  inputValue.trim() && !loading
-                    ? "bg-white text-black hover:bg-neutral-200"
-                    : "bg-[#424242] text-[#8e8e8e] cursor-not-allowed"
+                disabled={loading || (!inputValue.trim() && !attachedFile)}
+                className={`p-2.5 rounded-xl transition shrink-0 ${
+                  (inputValue.trim() || attachedFile) && !loading
+                    ? "bg-[#2cb8b2] text-white hover:bg-[#23a8a2] shadow-xs"
+                    : "bg-[#e2e8f0] text-[#94a3b8] cursor-not-allowed"
                 }`}
                 title="Send query"
               >
@@ -985,8 +1033,8 @@ export default function Home() {
               </button>
             </div>
 
-            <p className="text-center text-[11px] text-[#6b6b6b] mt-2">
-              AI Data Analyst executes deterministic DuckDB SQL & Pandas code. All chat history is saved to your database.
+            <p className="text-center text-[11px] text-[#94a3b8] mt-2">
+              Digital Back Office AI Data Analyst executes verified deterministic queries. History is persisted to your database.
             </p>
           </div>
         </div>

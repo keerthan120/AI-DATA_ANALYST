@@ -21,7 +21,6 @@ class InsightAgent:
         effective_key = api_key or settings.OPENROUTER_API_KEY
         effective_model = model or settings.OPENROUTER_MODEL
 
-        # If data is empty
         if not data_results and not anomalies:
             return "No matching records were found for this criteria in the database.", ["Verify dataset filters or column values."]
 
@@ -36,7 +35,7 @@ class InsightAgent:
                     model=effective_model
                 )
             except Exception:
-                pass # Fallback to dynamic deterministic synthesis
+                pass
 
         return InsightAgent._dynamic_synthesis(user_query, data_results, anomalies)
 
@@ -112,17 +111,38 @@ Return a strict JSON object with:
                 insights.append(f"Row {a.record_index} [{a.column_name}]: {a.explanation}")
             return answer, insights
 
-        # General aggregation result
+        # Dimension Ranking (e.g. region, customer, product)
         if len(keys) >= 2:
             dim_key = keys[0]
             val_key = keys[1]
             top_dim = first_row.get(dim_key, "Top Item")
             top_val = first_row.get(val_key, 0)
 
-            val_formatted = f"{top_val:,.2f}" if isinstance(top_val, (int, float)) else str(top_val)
-            answer = f"The leading **{dim_key}** is **{top_dim}**, with a total of **{val_formatted}**."
+            # Currency / numeric formatting
+            is_currency = any(c in val_key.lower() for c in ["revenue", "profit", "cost", "spent", "amount", "price", "inr"])
+            prefix = "₹" if "inr" in val_key.lower() else ("$" if is_currency else "")
+            
+            val_formatted = f"{prefix}{top_val:,.2f}" if isinstance(top_val, (int, float)) else str(top_val)
 
-            insights.append(f"**{top_dim}** represents the top record for **{val_key}** among {len(data_results)} ranked entries.")
+            # Specific Region response
+            if "region" in dim_key.lower() or "region" in q:
+                answer = f"Region **{top_dim}** generated the highest {val_key.replace('_', ' ')}, totaling **{val_formatted}**."
+            elif "product" in dim_key.lower() or "product" in q:
+                answer = f"Product **{top_dim}** is the top performer with a total of **{val_formatted}**."
+            elif "customer" in dim_key.lower() or "customer" in q:
+                answer = f"Customer **{top_dim}** generated the highest total of **{val_formatted}**."
+            elif "period" in dim_key.lower():
+                answer = f"Period **{top_dim}** recorded the highest volume with **{val_formatted}**."
+            else:
+                answer = f"The leading **{dim_key}** is **{top_dim}**, with a total of **{val_formatted}**."
+
+            # Calculate total across all returned rows
+            all_vals = [r.get(val_key, 0) for r in data_results if isinstance(r.get(val_key), (int, float))]
+            if all_vals:
+                total_sum = sum(all_vals)
+                pct_share = round((top_val / total_sum) * 100, 1) if total_sum > 0 else 0
+                insights.append(f"**{top_dim}** represents **{pct_share}%** of the total {val_key.replace('_', ' ')} across all analyzed categories.")
+
             if len(data_results) > 1:
                 runner_up = data_results[1]
                 runner_dim = runner_up.get(dim_key, "Second Item")
@@ -130,10 +150,10 @@ Return a strict JSON object with:
                 if isinstance(top_val, (int, float)) and isinstance(runner_val, (int, float)):
                     diff = top_val - runner_val
                     pct = round((diff / (runner_val or 1)) * 100, 1)
-                    insights.append(f"Outperformed the second highest ({runner_dim}) by {diff:,.2f} (+{pct}%).")
+                    insights.append(f"Outperformed the second highest ({runner_dim}) by {prefix}{diff:,.2f} (+{pct}%).")
             
             if anomalies:
-                insights.append(f"Note: {len(anomalies)} statistical anomalies were also detected in the underlying distribution.")
+                insights.append(f"Statistical audit: {len(anomalies)} outliers detected in numerical distributions.")
 
             return answer, insights
 

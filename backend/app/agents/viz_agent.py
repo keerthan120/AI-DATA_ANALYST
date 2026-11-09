@@ -41,29 +41,36 @@ class VisualizationAgent:
 
         # Determine chart type
         q_lower = query.lower()
-        chosen_type = ChartType.BAR
-
-        # 1. Temporal / Trend Analysis -> Line Chart
         is_date_col = any(term in x_key.lower() for term in ["date", "month", "year", "time", "day", "week", "period"])
         is_trend_query = any(term in q_lower for term in ["trend", "over time", "monthly", "daily", "timeline", "history"])
-        
-        if is_date_col or is_trend_query:
-            chosen_type = ChartType.LINE
-        # 2. Composition / Share -> Pie Chart
-        elif any(term in q_lower for term in ["pie", "proportion", "share", "breakdown", "percentage"]) and len(data) <= 8:
+
+        # 1. Explicit user request takes highest priority
+        if re.search(r'\bbar\b', q_lower):
+            chosen_type = ChartType.BAR
+        elif re.search(r'\bpie\b', q_lower):
             chosen_type = ChartType.PIE
-        # 3. Correlation / Relationship -> Scatter Plot
-        elif any(term in q_lower for term in ["scatter", "correlation", "vs", "versus", "relationship"]) and len(numeric_keys) >= 2:
+        elif re.search(r'\bscatter\b', q_lower):
+            chosen_type = ChartType.SCATTER
+            if len(numeric_keys) >= 2:
+                x_key = numeric_keys[0]
+                y_keys = [numeric_keys[1]]
+        elif re.search(r'\bline\b', q_lower):
+            chosen_type = ChartType.LINE
+        elif re.search(r'\barea\b', q_lower):
+            chosen_type = ChartType.AREA
+        # 2. Heuristic inference based on temporal context
+        elif is_date_col or is_trend_query:
+            chosen_type = ChartType.LINE
+        # 3. Composition / Share -> Pie Chart
+        elif any(term in q_lower for term in ["proportion", "share", "breakdown", "percentage"]) and len(data) <= 8:
+            chosen_type = ChartType.PIE
+        # 4. Correlation / Relationship -> Scatter Plot
+        elif any(term in q_lower for term in ["correlation", "vs", "versus", "relationship"]) and len(numeric_keys) >= 2:
             chosen_type = ChartType.SCATTER
             x_key = numeric_keys[0]
             y_keys = [numeric_keys[1]]
-        # 4. Explicit requests
-        elif "line" in q_lower:
-            chosen_type = ChartType.LINE
-        elif "bar" in q_lower:
+        else:
             chosen_type = ChartType.BAR
-        elif "area" in q_lower:
-            chosen_type = ChartType.AREA
 
         title = f"{y_keys[0].replace('_', ' ').title()} by {x_key.replace('_', ' ').title()}"
 
