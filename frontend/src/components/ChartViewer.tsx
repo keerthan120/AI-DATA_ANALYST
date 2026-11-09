@@ -21,7 +21,7 @@ import {
   Tooltip,
   Legend,
 } from "recharts";
-import { BarChart3, LineChart as LineIcon, PieChart as PieIcon, Layers } from "lucide-react";
+import { BarChart3, LineChart as LineIcon, PieChart as PieIcon, Layers, CircleDot } from "lucide-react";
 
 interface ChartViewerProps {
   chart: ChartConfig;
@@ -62,14 +62,16 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({ chart, data }) => {
         </div>
         <div className="flex items-center gap-0.5 bg-[#2f2f2f] rounded-lg p-1">
           {[
-            { type: "bar", icon: BarChart3 },
-            { type: "line", icon: LineIcon },
-            { type: "area", icon: Layers },
-            { type: "pie", icon: PieIcon },
-          ].map(({ type, icon: Icon }) => (
+            { type: "bar", icon: BarChart3, label: "Bar" },
+            { type: "line", icon: LineIcon, label: "Line" },
+            { type: "area", icon: Layers, label: "Area" },
+            { type: "pie", icon: PieIcon, label: "Pie" },
+            { type: "scatter", icon: CircleDot, label: "Scatter" },
+          ].map(({ type, icon: Icon, label }) => (
             <button
               key={type}
               onClick={() => setActiveType(type)}
+              title={`${label} Chart`}
               className={`p-1.5 rounded-md transition ${
                 activeType === type ? "bg-[#424242] text-[#ececec]" : "text-[#6b6b6b] hover:text-[#ececec]"
               }`}

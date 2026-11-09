@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useRef } from "react";
-import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2 } from "lucide-react";
-import { uploadFiles } from "@/lib/api";
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2, Sparkles } from "lucide-react";
+import { uploadFiles, loadSampleDatasets } from "@/lib/api";
 import { TableSchema } from "@/types";
 
 interface FileUploadProps {
@@ -19,6 +19,21 @@ export const FileUpload: React.FC<FileUploadProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLoadSamples = async () => {
+    setError(null);
+    setSuccessMsg(null);
+    setLoading(true);
+    try {
+      const updated = await loadSampleDatasets();
+      onTablesUpdated(updated);
+      setSuccessMsg("Loaded 3 sample datasets (sales_transactions, customers, products).");
+    } catch (err: any) {
+      setError(err.message || "Failed to load sample datasets.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -49,6 +64,16 @@ export const FileUpload: React.FC<FileUploadProps> = ({
         <h2 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 flex items-center gap-2">
           <FileSpreadsheet className="w-4 h-4 text-zinc-400" /> Dataset Ingestion
         </h2>
+        <button
+          onClick={handleLoadSamples}
+          disabled={loading}
+          type="button"
+          className="flex items-center gap-1.5 px-2 py-1 text-[11px] font-mono text-zinc-300 hover:text-white bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded transition disabled:opacity-50"
+          title="Load pre-built sales, customers, and products datasets"
+        >
+          <Sparkles className="w-3 h-3 text-amber-400" />
+          <span>Load Samples</span>
+        </button>
       </div>
 
       {/* Drag & Drop Area */}

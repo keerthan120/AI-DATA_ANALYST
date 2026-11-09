@@ -78,3 +78,19 @@ export interface AuthResponse {
   user?: UserProfile;
   token?: string;
 }
+
+export interface ConversationItem {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ConversationDetail {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: ChatMessage[];
+}

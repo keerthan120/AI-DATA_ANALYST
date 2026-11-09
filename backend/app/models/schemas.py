@@ -83,6 +83,27 @@ class ChatResponse(BaseModel):
     guardrail_status: dict[str, Any] = {"passed": True, "violations": []}
     execution_time_ms: float = 0.0
 
+class StoredMessage(BaseModel):
+    id: str
+    role: str
+    content: str
+    timestamp: str
+    responsePayload: Optional[ChatResponse] = None
+
+class ConversationSummary(BaseModel):
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    message_count: int = 0
+
+class ConversationDetail(BaseModel):
+    id: str
+    title: str
+    created_at: str
+    updated_at: str
+    messages: list[StoredMessage] = []
+
 class AnomalyDetectRequest(BaseModel):
     table_name: str
     column_names: list[str] = []

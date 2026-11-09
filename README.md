@@ -19,6 +19,17 @@ The system provides an enterprise-focused analytics workspace:
 
 ---
 
+## Visual Preview & Demo Walkthrough
+
+### Application Interface & Analytical Console
+![Dashboard Preview](docs/screenshots/dashboard_preview.jpg)
+
+### 10–30 Second Video Demonstration
+* **Direct Video File:** [`docs/demo.mp4`](docs/demo.mp4) (Local demo recording showcasing CSV upload, natural language query execution, interactive chart rendering, and statistical anomaly detection)
+* **Live Application Preview:** `http://localhost:3000` (via Docker Compose or local development server)
+
+---
+
 ## System Architecture
 
 ```mermaid
@@ -65,6 +76,11 @@ flowchart TD
 
 ```
 DATA/
+├── sample_data/
+│   ├── sales_transactions.csv        # 278 rows across 5 regions with seasonal dates and outliers
+│   ├── customers.csv                 # 12 customer accounts with segments and jurisdictions
+│   ├── products.csv                  # 10 catalog items with stock quantities and categories
+│   └── README.md                     # Dataset documentation & test queries
 ├── backend/
 │   ├── app/
 │   │   ├── agents/
@@ -207,6 +223,7 @@ backend/tests/test_agent_workflow.py::test_monthly_sales_trends PASSED
 backend/tests/test_agent_workflow.py::test_top_five_customers_multi_table_join PASSED
 backend/tests/test_agent_workflow.py::test_underperforming_products PASSED
 backend/tests/test_agent_workflow.py::test_detect_anomalies_workflow PASSED
+backend/tests/test_agent_workflow.py::test_code_generation_sql_and_pandas PASSED
 backend/tests/test_anomaly.py::test_anomaly_detection_iqr_and_zscore PASSED
 backend/tests/test_auth.py::test_auth_registration_and_login PASSED
 backend/tests/test_auth.py::test_auth_forgot_and_reset_password PASSED
@@ -216,7 +233,7 @@ backend/tests/test_guardrails.py::test_sql_guardrail_blocks_destructive_commands
 backend/tests/test_guardrails.py::test_sql_guardrail_permits_read_only_queries PASSED
 backend/tests/test_guardrails.py::test_prompt_injection_guardrail PASSED
 
-============================= 13 passed in 22.65s =============================
+============================= 14 passed in 50.40s =============================
 ```
 
 Frontend production verification:

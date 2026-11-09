@@ -49,6 +49,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [inputValue, setInputValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTabs, setActiveTabs] = useState<Record<string, "answer" | "chart" | "data" | "sql">>({});
+  const [codeMode, setCodeMode] = useState<Record<string, "sql" | "pandas">>({});
   const [copiedSql, setCopiedSql] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -134,7 +135,7 @@ ${r.natural_language_answer}
 ${r.insights.map((ins) => `- ${ins}`).join("\n")}
 
 ${r.sql_query ? `## DuckDB SQL\n\`\`\`sql\n${r.sql_query}\n\`\`\`\n` : ""}
-
+${r.python_code ? `## Pandas Python Code\n\`\`\`python\n${r.python_code}\n\`\`\`\n` : ""}
 ## Anomalies Detected
 ${r.anomalies.map((a) => `- Row ${a.record_index} [${a.column_name}]: ${a.explanation}`).join("\n")}
 `;
@@ -226,7 +227,7 @@ ${r.anomalies.map((a) => `- Row ${a.record_index} [${a.column_name}]: ${a.explan
                           </button>
                         )}
 
-                        {res.sql_query && (
+                        {(res.sql_query || res.python_code) && (
                           <button
                             onClick={() => setActiveTabs((p) => ({ ...p, [m.id]: "sql" }))}
                             className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition ${
@@ -234,7 +235,7 @@ ${r.anomalies.map((a) => `- Row ${a.record_index} [${a.column_name}]: ${a.explan
                             }`}
                           >
                             <Code2 className="w-3.5 h-3.5" />
-                            <span>DuckDB SQL</span>
+                            <span>Code & SQL</span>
                           </button>
                         )}
                       </div>
@@ -306,21 +307,65 @@ ${r.anomalies.map((a) => `- Row ${a.record_index} [${a.column_name}]: ${a.explan
                       </div>
                     )}
 
-                    {/* Tab 4: Generated SQL */}
-                    {currentTab === "sql" && res.sql_query && (
-                      <div className="relative group bg-zinc-950 border border-zinc-800 rounded-md p-3 font-mono text-xs text-zinc-200 overflow-x-auto">
-                        <button
-                          onClick={() => copyToClipboard(res.sql_query!, m.id)}
-                          className="absolute top-2.5 right-2.5 p-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white transition border border-zinc-800"
-                          title="Copy SQL Query"
-                        >
-                          {copiedSql === m.id ? (
-                            <Check className="w-3.5 h-3.5 text-emerald-400" />
-                          ) : (
-                            <Copy className="w-3.5 h-3.5" />
-                          )}
-                        </button>
-                        <pre className="pr-8">{res.sql_query}</pre>
+                    {/* Tab 4: Generated SQL & Pandas Code */}
+                    {currentTab === "sql" && (res.sql_query || res.python_code) && (
+                      <div className="bg-zinc-950 border border-zinc-800 rounded-md overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-zinc-900 border-b border-zinc-800">
+                          <div className="flex items-center gap-1">
+                            {res.sql_query && (
+                              <button
+                                onClick={() => setCodeMode((p) => ({ ...p, [m.id]: "sql" }))}
+                                className={`px-2.5 py-1 text-[11px] font-mono rounded transition ${
+                                  (codeMode[m.id] || "sql") === "sql"
+                                    ? "bg-zinc-800 text-zinc-100 font-semibold border border-zinc-700"
+                                    : "text-zinc-400 hover:text-zinc-200"
+                                }`}
+                              >
+                                DuckDB SQL
+                              </button>
+                            )}
+                            {res.python_code && (
+                              <button
+                                onClick={() => setCodeMode((p) => ({ ...p, [m.id]: "pandas" }))}
+                                className={`px-2.5 py-1 text-[11px] font-mono rounded transition ${
+                                  codeMode[m.id] === "pandas"
+                                    ? "bg-zinc-800 text-zinc-100 font-semibold border border-zinc-700"
+                                    : "text-zinc-400 hover:text-zinc-200"
+                                }`}
+                              >
+                                Pandas (Python)
+                              </button>
+                            )}
+                          </div>
+
+                          <button
+                            onClick={() => {
+                              const activeType = codeMode[m.id] || "sql";
+                              const textToCopy = (activeType === "pandas" && res.python_code) ? res.python_code : res.sql_query || "";
+                              copyToClipboard(textToCopy, `${m.id}-${activeType}`);
+                            }}
+                            className="flex items-center gap-1 px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-[11px] font-mono transition border border-zinc-700"
+                            title="Copy code to clipboard"
+                          >
+                            {copiedSql === `${m.id}-${codeMode[m.id] || "sql"}` ? (
+                              <>
+                                <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                <span className="text-emerald-400">Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3.5 h-3.5" />
+                                <span>Copy</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="p-3 font-mono text-xs text-zinc-200 overflow-x-auto">
+                          <pre>
+                            {(codeMode[m.id] === "pandas" && res.python_code) ? res.python_code : res.sql_query}
+                          </pre>
+                        </div>
                       </div>
                     )}
                   </div>

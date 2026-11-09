@@ -109,7 +109,7 @@ def sql_node(state: AgentState) -> dict[str, Any]:
     model = state.get("model")
     steps = state.get("reasoning_steps", [])
 
-    sql, rows, total_count, error, agent_steps = SQLAgent.generate_and_execute_sql(
+    sql, python_code, rows, total_count, error, agent_steps = SQLAgent.generate_and_execute_sql(
         user_query=query,
         schema_context=schema_ctx,
         table_names=tables,
@@ -120,6 +120,7 @@ def sql_node(state: AgentState) -> dict[str, Any]:
 
     return {
         "sql_query": sql,
+        "python_code": python_code,
         "data_results": rows,
         "total_data_rows": total_count,
         "execution_error": error,

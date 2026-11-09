@@ -1,6 +1,41 @@
-import { TableSchema, ChatResponse, AnomalyRecord, UserProfile, AuthResponse } from "@/types";
+import { TableSchema, ChatResponse, AnomalyRecord, UserProfile, AuthResponse, ConversationItem, ConversationDetail } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
+
+// Conversation Persistence (Database)
+export async function fetchConversations(): Promise<ConversationItem[]> {
+  const res = await fetch(`${API_BASE}/conversations`);
+  if (!res.ok) {
+    return [];
+  }
+  return res.json();
+}
+
+export async function createConversation(payload: { id?: string; title?: string } = {}): Promise<ConversationItem> {
+  const res = await fetch(`${API_BASE}/conversations`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    throw new Error("Failed to create conversation in database.");
+  }
+  return res.json();
+}
+
+export async function fetchConversation(id: string): Promise<ConversationDetail> {
+  const res = await fetch(`${API_BASE}/conversations/${id}`);
+  if (!res.ok) {
+    throw new Error("Failed to fetch conversation history from database.");
+  }
+  return res.json();
+}
+
+export async function deleteConversation(id: string): Promise<void> {
+  await fetch(`${API_BASE}/conversations/${id}`, {
+    method: "DELETE",
+  });
+}
 
 // CSV Data & Ingestion
 export async function uploadFiles(files: File[]): Promise<TableSchema[]> {
@@ -17,6 +52,18 @@ export async function uploadFiles(files: File[]): Promise<TableSchema[]> {
     throw new Error(errorData.detail || "Failed to upload files.");
   }
 
+  const data = await res.json();
+  return data.tables;
+}
+
+export async function loadSampleDatasets(): Promise<TableSchema[]> {
+  const res = await fetch(`${API_BASE}/load-samples`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Failed to load sample datasets.");
+  }
   const data = await res.json();
   return data.tables;
 }

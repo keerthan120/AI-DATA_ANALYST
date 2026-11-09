@@ -55,3 +55,47 @@ async def list_tables():
     """Returns profiles and preview rows for all registered tables."""
     return db_engine.get_registered_tables_info()
 
+@router.post("/load-samples", response_model=UploadResponse)
+async def load_sample_datasets():
+    """
+    Registers the included production sample datasets (sales_transactions, customers, products)
+    into DuckDB virtual tables for immediate demonstration and verification.
+    """
+    candidates = [
+        Path("sample_data"),
+        Path(__file__).resolve().parent.parent.parent.parent / "sample_data",
+        Path(__file__).resolve().parent.parent.parent / "sample_data",
+        settings.BASE_DIR.parent / "sample_data"
+    ]
+    
+    sample_dir = None
+    for c in candidates:
+        if c.exists() and (c / "sales_transactions.csv").exists():
+            sample_dir = c
+            break
+
+    if not sample_dir:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sample datasets directory ('sample_data') not found."
+        )
+
+    sample_files = [
+        ("sales_transactions", sample_dir / "sales_transactions.csv"),
+        ("customers", sample_dir / "customers.csv"),
+        ("products", sample_dir / "products.csv"),
+    ]
+
+    registered_tables: list[TableSchema] = []
+    for table_name, file_path in sample_files:
+        if file_path.exists():
+            schema = db_engine.register_csv(table_name=table_name, file_path=file_path)
+            registered_tables.append(schema)
+
+    return UploadResponse(
+        success=True,
+        message=f"Loaded and profiled {len(registered_tables)} sample dataset(s): sales_transactions, customers, products.",
+        tables=registered_tables
+    )
+
+

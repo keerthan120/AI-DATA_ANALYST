@@ -14,13 +14,14 @@ class SQLAgent:
         table_names: list[str],
         api_key: Optional[str] = None,
         model: Optional[str] = None,
-    ) -> tuple[Optional[str], list[dict[str, Any]], int, Optional[str], list[str]]:
+    ) -> tuple[Optional[str], Optional[str], list[dict[str, Any]], int, Optional[str], list[str]]:
         """
-        Generates SQL via LLM (or robust semantic fallback), validates via guardrail, and executes against DuckDB.
-        Returns: (sql_query, rows, total_rows, error_message, reasoning_steps)
+        Generates SQL and Pandas code via LLM (or robust semantic fallback), validates via guardrails, and executes against DuckDB.
+        Returns: (sql_query, python_code, rows, total_rows, error_message, reasoning_steps)
         """
         reasoning_steps: list[str] = []
         sql_query: Optional[str] = None
+        python_code: Optional[str] = None
 
         # 1. Check if LLM is accessible
         effective_key = api_key or settings.OPENROUTER_API_KEY
@@ -28,8 +29,8 @@ class SQLAgent:
 
         if effective_key:
             try:
-                reasoning_steps.append("Calling OpenRouter LLM to translate natural language intent into SQL...")
-                sql_query, steps = SQLAgent._call_llm_for_sql(
+                reasoning_steps.append("Calling OpenRouter LLM to translate natural language intent into SQL and Pandas code...")
+                sql_query, python_code, steps = SQLAgent._call_llm_for_sql(
                     user_query=user_query,
                     schema_context=schema_context,
                     api_key=effective_key,
@@ -38,33 +39,33 @@ class SQLAgent:
                 reasoning_steps.extend(steps)
             except Exception as e:
                 reasoning_steps.append(f"LLM API call failed or rate-limited ({str(e)}). Falling back to semantic query engine.")
-                sql_query, steps = SQLAgent._semantic_fallback_sql(user_query, table_names)
+                sql_query, python_code, steps = SQLAgent._semantic_fallback_sql(user_query, table_names)
                 reasoning_steps.extend(steps)
         else:
-            reasoning_steps.append("No OpenRouter API key provided. Activating built-in semantic SQL generator.")
-            sql_query, steps = SQLAgent._semantic_fallback_sql(user_query, table_names)
+            reasoning_steps.append("No OpenRouter API key provided. Activating built-in semantic code generator.")
+            sql_query, python_code, steps = SQLAgent._semantic_fallback_sql(user_query, table_names)
             reasoning_steps.extend(steps)
 
         if not sql_query:
-            return None, [], 0, "Could not determine a valid SQL query for this question.", reasoning_steps
+            return None, None, [], 0, "Could not determine a valid SQL query for this question.", reasoning_steps
 
         # 2. Guardrail Validation
         reasoning_steps.append("Validating SQL query through safety guardrails...")
         is_safe, violations = InputGuardrail.validate_sql(sql_query)
         if not is_safe:
             err = f"Guardrail Violation: {'; '.join(violations)}"
-            return sql_query, [], 0, err, reasoning_steps
+            return sql_query, python_code, [], 0, err, reasoning_steps
 
         # 3. Execution in DuckDB
         try:
             reasoning_steps.append(f"Executing query safely in DuckDB engine: {sql_query}")
             rows, total_count = db_engine.execute_query(sql_query, max_rows=settings.MAX_RESULT_ROWS)
             reasoning_steps.append(f"Query returned {total_count} matching rows.")
-            return sql_query, rows, total_count, None, reasoning_steps
+            return sql_query, python_code, rows, total_count, None, reasoning_steps
         except Exception as e:
             err = f"DuckDB Execution Error: {str(e)}"
             reasoning_steps.append(f"Execution failed: {err}")
-            return sql_query, [], 0, err, reasoning_steps
+            return sql_query, python_code, [], 0, err, reasoning_steps
 
     @staticmethod
     def _call_llm_for_sql(
@@ -72,24 +73,25 @@ class SQLAgent:
         schema_context: str,
         api_key: str,
         model: str
-    ) -> tuple[Optional[str], list[str]]:
+    ) -> tuple[Optional[str], Optional[str], list[str]]:
         client = OpenAI(
             base_url=settings.OPENROUTER_BASE_URL,
             api_key=api_key,
         )
 
         system_prompt = f"""
-You are an expert Data Analyst and DuckDB SQL generator.
-Generate a single, clean, valid DuckDB SQL SELECT query that answers the user's question based strictly on the provided schema.
+You are an expert Data Analyst, DuckDB SQL generator, and Pandas Python programmer.
+Generate a valid DuckDB SQL SELECT query and equivalent idiomatic Pandas Python code that answers the user's question based strictly on the provided schema.
 
 Rules:
-1. ONLY return valid DuckDB SQL syntax. Use double quotes for column or table names if needed.
+1. ONLY return valid DuckDB SQL syntax and valid Python/Pandas code.
 2. Read-only queries only (SELECT or WITH). Never write DROP, DELETE, INSERT, UPDATE, ALTER.
 3. For date manipulation in DuckDB, use strftime(col, '%Y-%m') or date_trunc('month', col).
 4. If multi-table join is required, use proper JOIN syntax with matching foreign keys.
 5. Limit results to 100 unless a specific LIMIT is requested.
 6. Provide your response as a JSON object with:
-   - "sql": "THE_SQL_QUERY",
+   - "sql": "THE_DUCKDB_SQL_QUERY",
+   - "pandas": "THE_EQUIVALENT_PANDAS_PYTHON_CODE",
    - "reasoning": ["Step 1 explanation", "Step 2 explanation"]
 
 Schema Context:
@@ -109,15 +111,17 @@ Schema Context:
         content = response.choices[0].message.content or "{}"
         data = json.loads(content)
         sql = data.get("sql", "").strip()
-        # Clean any accidental markdown code blocks
         sql = re.sub(r"```(sql)?", "", sql).strip()
-        steps = data.get("reasoning", ["Generated SQL based on matching columns and aggregations."])
-        return sql, steps
+        pandas_code = data.get("pandas", "").strip()
+        pandas_code = re.sub(r"```(python)?", "", pandas_code).strip()
+        steps = data.get("reasoning", ["Generated DuckDB SQL and Pandas code based on matching schema columns."])
+        return sql, pandas_code, steps
 
     @staticmethod
-    def _semantic_fallback_sql(user_query: str, table_names: list[str]) -> tuple[Optional[str], list[str]]:
+    def _semantic_fallback_sql(user_query: str, table_names: list[str]) -> tuple[Optional[str], Optional[str], list[str]]:
         """
         Intelligent semantic rules engine for answering standard analysis queries with zero hallucination.
+        Returns: (sql_query, python_code, steps)
         """
         q = user_query.lower()
         available_tables = [t.table_name for t in db_engine.get_registered_tables_info()]
@@ -138,7 +142,20 @@ Schema Context:
                 GROUP BY region
                 ORDER BY total_revenue DESC
             """
-            return sql.strip(), steps
+            pandas_code = f"""import pandas as pd
+
+# Group sales by region and calculate revenue and volume
+result = (
+    sales_df.groupby("region", as_index=False)
+    .agg(
+        total_revenue=("total_amount", "sum"),
+        transaction_count=("total_amount", "count")
+    )
+    .round({{"total_revenue": 2}})
+    .sort_values(by="total_revenue", ascending=False)
+)
+print(result)"""
+            return sql.strip(), pandas_code, steps
 
         # 2. Monthly sales trends
         if ("monthly" in q or "month" in q or "trend" in q) and ("sales" in q or "revenue" in q or "trend" in q):
@@ -151,7 +168,21 @@ Schema Context:
                 GROUP BY sales_month
                 ORDER BY sales_month ASC
             """
-            return sql.strip(), steps
+            pandas_code = f"""import pandas as pd
+
+# Extract YYYY-MM period and aggregate monthly volume
+sales_df["sales_month"] = pd.to_datetime(sales_df["order_date"]).dt.strftime("%Y-%m")
+result = (
+    sales_df.groupby("sales_month", as_index=False)
+    .agg(
+        monthly_revenue=("total_amount", "sum"),
+        total_units_sold=("quantity", "sum")
+    )
+    .round({{"monthly_revenue": 2}})
+    .sort_values(by="sales_month", ascending=True)
+)
+print(result)"""
+            return sql.strip(), pandas_code, steps
 
         # 3. Top five customers
         if ("top" in q or "highest" in q or "best" in q) and ("customer" in q or "client" in q or "buyer" in q):
@@ -167,6 +198,21 @@ Schema Context:
                     ORDER BY total_spent DESC
                     LIMIT 5
                 """
+                pandas_code = f"""import pandas as pd
+
+# Inner join between transactions and customer directory
+merged = pd.merge(sales_df, customers_df, on="customer_id", how="inner")
+result = (
+    merged.groupby(["customer_name", "segment", "country"], as_index=False)
+    .agg(
+        total_spent=("total_amount", "sum"),
+        total_orders=("transaction_id", "count")
+    )
+    .round({{"total_spent": 2}})
+    .sort_values(by="total_spent", ascending=False)
+    .head(5)
+)
+print(result)"""
             else:
                 sql = f"""
                     SELECT customer_id, ROUND(SUM(total_amount), 2) AS total_spent, COUNT(*) AS orders
@@ -175,11 +221,25 @@ Schema Context:
                     ORDER BY total_spent DESC
                     LIMIT 5
                 """
-            return sql.strip(), steps
+                pandas_code = f"""import pandas as pd
+
+# Group by customer_id and rank total spend
+result = (
+    sales_df.groupby("customer_id", as_index=False)
+    .agg(
+        total_spent=("total_amount", "sum"),
+        orders=("total_amount", "count")
+    )
+    .round({{"total_spent": 2}})
+    .sort_values(by="total_spent", ascending=False)
+    .head(5)
+)
+print(result)"""
+            return sql.strip(), pandas_code, steps
 
         # 4. Underperforming products
         if "underperform" in q or ("low" in q and "product" in q) or "worst" in q or "least sold" in q:
-            steps.append(f"Evaluated units sold and revenue per product to spot underperforming inventory items.")
+            steps.append("Evaluated units sold and revenue per product to spot underperforming inventory items.")
             if prod_table in available_tables:
                 sql = f"""
                     SELECT p.product_name, p.category, p.stock_quantity,
@@ -191,6 +251,20 @@ Schema Context:
                     ORDER BY total_units_sold ASC, total_revenue ASC
                     LIMIT 5
                 """
+                pandas_code = f"""import pandas as pd
+
+# Left join to capture products with zero or minimal transactions
+merged = pd.merge(products_df, sales_df, on="product_id", how="left")
+result = (
+    merged.groupby(["product_name", "category", "stock_quantity"], as_index=False)
+    .agg(
+        total_units_sold=("quantity", lambda x: int(x.fillna(0).sum())),
+        total_revenue=("total_amount", lambda x: round(float(x.fillna(0).sum()), 2))
+    )
+    .sort_values(by=["total_units_sold", "total_revenue"], ascending=True)
+    .head(5)
+)
+print(result)"""
             else:
                 sql = f"""
                     SELECT product_id, SUM(quantity) as total_units_sold, ROUND(SUM(total_amount), 2) as total_revenue
@@ -199,10 +273,27 @@ Schema Context:
                     ORDER BY total_units_sold ASC
                     LIMIT 5
                 """
-            return sql.strip(), steps
+                pandas_code = f"""import pandas as pd
+
+result = (
+    sales_df.groupby("product_id", as_index=False)
+    .agg(
+        total_units_sold=("quantity", "sum"),
+        total_revenue=("total_amount", "sum")
+    )
+    .round({{"total_revenue": 2}})
+    .sort_values(by="total_units_sold", ascending=True)
+    .head(5)
+)
+print(result)"""
+            return sql.strip(), pandas_code, steps
 
         # 5. Generic aggregation / general query
         steps.append(f"Executed general overview query on primary table {sales_table}.")
-        sql = f"SELECT * FROM \"{sales_table}\" LIMIT 20"
-        return sql, steps
+        sql = f'SELECT * FROM "{sales_table}" LIMIT 20'
+        pandas_code = f"""import pandas as pd
 
+# Sample overview of first 20 records
+result = sales_df.head(20)
+print(result)"""
+        return sql, pandas_code, steps

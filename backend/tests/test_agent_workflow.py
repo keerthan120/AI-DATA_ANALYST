@@ -101,3 +101,18 @@ def test_detect_anomalies_workflow():
     assert result["guardrail_status"]["passed"] is True
     assert len(result["anomalies"]) > 0
     assert any(a.explanation for a in result["anomalies"])
+
+def test_code_generation_sql_and_pandas():
+    state = {
+        "session_id": "test-session",
+        "message": "Generate SQL and pandas code for monthly sales trends",
+        "table_names": ["sales_transactions"],
+        "conversation_history": []
+    }
+    result = agent_graph.invoke(state)
+    assert result["guardrail_status"]["passed"] is True
+    assert result["sql_query"] is not None
+    assert "sales_transactions" in result["sql_query"]
+    assert result["python_code"] is not None
+    assert "pandas" in result["python_code"]
+
