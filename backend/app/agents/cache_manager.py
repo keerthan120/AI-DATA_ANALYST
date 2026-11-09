@@ -47,3 +47,4 @@ class QueryCache:
 
 # Global cache instance
 query_cache = QueryCache()
+

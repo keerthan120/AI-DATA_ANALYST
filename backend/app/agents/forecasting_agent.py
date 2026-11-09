@@ -113,3 +113,4 @@ class ForecastingAgent:
 
         except Exception as e:
             return [], None, f"Forecasting calculation error: {str(e)}", []
+

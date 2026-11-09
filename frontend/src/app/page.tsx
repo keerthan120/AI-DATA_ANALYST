@@ -20,6 +20,7 @@ import {
 import { ReasoningViewer } from "@/components/ReasoningViewer";
 import { ChartViewer } from "@/components/ChartViewer";
 import { AnomalyViewer } from "@/components/AnomalyViewer";
+import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import {
   Send,
   Plus,
@@ -709,8 +710,8 @@ export default function Home() {
                       )}
 
                       {/* Natural Language Answer / Dataset Overview */}
-                      <div className="prose-chat text-sm text-[#ececec] leading-relaxed whitespace-pre-line bg-[#282828] p-4 rounded-xl border border-[#333]">
-                        {msg.content}
+                      <div className="bg-[#282828] p-5 rounded-xl border border-[#333]">
+                        <MarkdownRenderer content={msg.content} />
                       </div>
 
                       {/* Strategic Insights Cards */}
