@@ -10,7 +10,7 @@ if str(backend_dir) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routers import upload, chat
+from app.routers import upload, chat, auth
 from app.engine.duckdb_engine import db_engine
 
 app = FastAPI(
@@ -31,6 +31,7 @@ app.add_middleware(
 # Include Routers
 app.include_router(upload.router)
 app.include_router(chat.router)
+app.include_router(auth.router)
 
 @app.get("/")
 async def root():

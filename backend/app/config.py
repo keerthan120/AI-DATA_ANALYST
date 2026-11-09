@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-exp:free")
     OPENROUTER_FALLBACK_MODEL: str = os.getenv("OPENROUTER_FALLBACK_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
     
+    # Database Configuration
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://postgres:4321@localhost:5432/data_analyst")
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "auth-secret-key-data-analyst-2026")
+
     # File Storage
     UPLOAD_DIR: Path = Path(__file__).resolve().parent.parent / "uploads"
     

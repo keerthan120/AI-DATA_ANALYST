@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AI Data Analyst - Enterprise Multi-Agent Data Assistant",
-  description: "Interact with multi-CSV data using natural language, LangGraph multi-agent orchestration, and DuckDB.",
+  title: "Data Analyst: Multi-Agent Analytics Engine",
+  description: "Production-grade multi-agent data analysis engine powered by LangGraph, DuckDB, and OpenRouter.",
+  icons: {
+    icon: "/icon.svg",
+  },
 };
 
 export default function RootLayout({
@@ -13,10 +16,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className="min-h-screen bg-slate-950 text-slate-100 antialiased">
+      <body className="min-h-screen bg-zinc-950 text-zinc-100 antialiased font-sans">
         {children}
       </body>
     </html>
   );
 }
-

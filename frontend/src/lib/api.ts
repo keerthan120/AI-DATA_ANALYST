@@ -1,7 +1,8 @@
-import { TableSchema, ChatResponse, AnomalyRecord } from "@/types";
+import { TableSchema, ChatResponse, AnomalyRecord, UserProfile, AuthResponse } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
 
+// CSV Data & Ingestion
 export async function uploadFiles(files: File[]): Promise<TableSchema[]> {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
@@ -32,8 +33,6 @@ export async function sendChatMessage(params: {
   sessionId?: string;
   message: string;
   tableNames: string[];
-  apiKey?: string;
-  model?: string;
   conversationHistory?: { role: string; content: string }[];
 }): Promise<ChatResponse> {
   const res = await fetch(`${API_BASE}/chat`, {
@@ -45,8 +44,6 @@ export async function sendChatMessage(params: {
       session_id: params.sessionId || "default-session",
       message: params.message,
       table_names: params.tableNames,
-      api_key: params.apiKey || null,
-      model: params.model || null,
       conversation_history: params.conversationHistory || [],
     }),
   });
@@ -84,4 +81,68 @@ export async function detectAnomalies(params: {
   }
 
   return res.json();
+}
+
+// User Authentication (PostgreSQL 16)
+export async function registerUser(payload: {
+  email: string;
+  password: string;
+  fullName?: string;
+}): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: payload.email,
+      password: payload.password,
+      full_name: payload.fullName || null,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "Registration failed.");
+  return data;
+}
+
+export async function loginUser(payload: {
+  email: string;
+  password: string;
+}): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "Invalid email or password.");
+  return data;
+}
+
+export async function forgotPassword(email: string): Promise<{ success: boolean; message: string; reset_token?: string }> {
+  const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "Failed to request reset token.");
+  return data;
+}
+
+export async function resetPassword(payload: {
+  email: string;
+  resetToken: string;
+  newPassword: string;
+}): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${API_BASE}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email: payload.email,
+      reset_token: payload.resetToken,
+      new_password: payload.newPassword,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || "Failed to reset password.");
+  return data;
 }

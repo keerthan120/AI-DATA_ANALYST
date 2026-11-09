@@ -75,15 +75,15 @@ def greeting_node(state: AgentState) -> dict[str, Any]:
     table_list = ", ".join(tables) if tables else "none"
 
     greeting_text = (
-        f"👋 Hello! I am your **AI Data Analyst** powered by LangGraph, DuckDB, and OpenRouter.\n\n"
-        f"Currently, I have **{len(tables)} active dataset(s)** loaded in memory (`{table_list}`).\n\n"
-        f"**Here are some questions you can ask me right now:**\n"
-        f"• *\"Which region generated the highest revenue?\"*\n"
-        f"• *\"Show monthly sales trends.\"*\n"
-        f"• *\"What are the top five customers?\"*\n"
-        f"• *\"Which products are underperforming?\"*\n"
-        f"• *\"Detect anomalies in the dataset.\"*\n"
-        f"• *\"Generate SQL for this analysis.\"*"
+        f"Data Analyst engine initialized. Active tables: {len(tables)} ({table_list}).\n\n"
+        f"Ready to process analytical queries, aggregations, trend computations, and anomaly checks.\n\n"
+        f"Supported query operations:\n"
+        f"- Regional performance and revenue aggregation\n"
+        f"- Monthly and temporal sales trends\n"
+        f"- Top customer ranking and cross-table joins\n"
+        f"- Inventory turnover and underperforming product identification\n"
+        f"- Statistical anomaly detection (IQR, Z-Score, Isolation Forest)\n"
+        f"- Deterministic DuckDB SQL generation"
     )
     steps.append("Prepared tailored greeting with active dataset context and suggested prompts.")
     elapsed_ms = round((time.time() - start_time) * 1000, 2)

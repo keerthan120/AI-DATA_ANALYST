@@ -64,3 +64,17 @@ export interface ChatResponse {
   };
   execution_time_ms: number;
 }
+
+export interface UserProfile {
+  id: number;
+  email: string;
+  full_name?: string;
+  created_at: string;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  message: string;
+  user?: UserProfile;
+  token?: string;
+}
