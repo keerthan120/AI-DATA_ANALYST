@@ -109,3 +109,4 @@ export const DataPreview: React.FC<DataPreviewProps> = ({ tables }) => {
     </div>
   );
 };
+

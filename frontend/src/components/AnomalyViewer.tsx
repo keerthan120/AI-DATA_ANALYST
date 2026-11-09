@@ -59,3 +59,4 @@ export const AnomalyViewer: React.FC<AnomalyViewerProps> = ({ anomalies }) => {
     </div>
   );
 };
+

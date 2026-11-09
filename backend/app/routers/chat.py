@@ -80,3 +80,4 @@ async def detect_table_anomalies(request: AnomalyDetectRequest):
         z_threshold=request.threshold
     )
     return anomalies
+

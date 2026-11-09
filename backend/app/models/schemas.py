@@ -94,3 +94,4 @@ class AnomalyDetectRequest(BaseModel):
     column_names: list[str] = []
     method: Literal["iqr", "zscore", "isolation_forest", "auto"] = "auto"
     threshold: float = 2.5
+

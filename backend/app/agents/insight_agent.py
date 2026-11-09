@@ -161,3 +161,4 @@ Return a strict JSON object with:
         answer = f"Retrieved {len(data_results)} records matching your query."
         insights.append(f"Key dimensions analyzed: {', '.join(keys[:4])}.")
         return answer, insights
+

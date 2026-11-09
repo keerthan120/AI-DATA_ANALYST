@@ -92,3 +92,4 @@ with open("sample_data/sales_transactions.csv", "w", newline="", encoding="utf-8
     writer.writerows(transactions)
 
 print("Generated sample datasets successfully!")
+

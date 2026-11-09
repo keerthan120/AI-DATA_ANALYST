@@ -81,3 +81,4 @@ def test_detect_anomalies_workflow():
     assert len(result["anomalies"]) > 0
     # Anomaly explanations must exist
     assert any(a.explanation for a in result["anomalies"])
+

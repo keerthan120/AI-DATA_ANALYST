@@ -78,3 +78,4 @@ async def load_sample_datasets():
         message=f"Loaded {len(registered)} sample dataset(s) into memory.",
         tables=registered
     )
+

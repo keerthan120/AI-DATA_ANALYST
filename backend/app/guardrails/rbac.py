@@ -55,3 +55,4 @@ def get_current_role(x_user_role: Optional[str] = Header(default="Admin")) -> Us
         return UserRole(x_user_role)
     except ValueError:
         return UserRole.VIEWER
+

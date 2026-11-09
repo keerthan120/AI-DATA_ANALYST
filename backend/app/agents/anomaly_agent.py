@@ -98,3 +98,4 @@ class AnomalyDetectionAgent:
         # Sort anomalies by score descending and limit
         anomalies.sort(key=lambda x: x.score, reverse=True)
         return anomalies[:max_anomalies]
+

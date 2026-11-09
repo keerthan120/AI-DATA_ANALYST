@@ -46,3 +46,4 @@ def test_rbac_permissions():
     # Viewer can query data, but cannot execute custom code
     assert RBACManager.check_permission(UserRole.VIEWER, Permission.QUERY_DATA)
     assert not RBACManager.check_permission(UserRole.VIEWER, Permission.EXECUTE_CUSTOM_CODE)
+

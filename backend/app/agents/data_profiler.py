@@ -52,3 +52,4 @@ class DataProfilerAgent:
 
         active_table_names = [s.table_name for s in target_schemas]
         return "\n".join(context_lines), active_table_names
+

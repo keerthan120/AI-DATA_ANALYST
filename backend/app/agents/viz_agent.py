@@ -76,3 +76,4 @@ class VisualizationAgent:
             y_label=y_keys[0].replace("_", " ").title(),
             description=f"Generated {chosen_type.value} chart analyzing {title}."
         )
+

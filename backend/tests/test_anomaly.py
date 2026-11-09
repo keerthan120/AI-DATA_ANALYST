@@ -14,3 +14,4 @@ def test_anomaly_detection_iqr_and_zscore():
     assert top_anomaly.record_index == 9
     assert top_anomaly.value == 10000.0
     assert "upper outlier" in top_anomaly.explanation.lower()
+

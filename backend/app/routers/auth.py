@@ -10,3 +10,4 @@ async def get_roles():
         role.value: [p.value for p in perms]
         for role, perms in ROLE_PERMISSIONS.items()
     }
+

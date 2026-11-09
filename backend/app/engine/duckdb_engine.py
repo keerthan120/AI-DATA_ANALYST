@@ -129,3 +129,4 @@ class DuckDBEngine:
 
 # Global singleton engine
 db_engine = DuckDBEngine()
+

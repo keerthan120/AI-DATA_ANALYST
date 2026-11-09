@@ -183,3 +183,4 @@ export const ChartViewer: React.FC<ChartViewerProps> = ({ chart, data }) => {
     </div>
   );
 };
+

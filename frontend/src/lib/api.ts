@@ -100,3 +100,4 @@ export async function detectAnomalies(params: {
 
   return res.json();
 }
+

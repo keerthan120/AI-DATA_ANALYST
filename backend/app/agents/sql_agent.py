@@ -205,3 +205,4 @@ Schema Context:
         steps.append(f"Executed general overview query on primary table {sales_table}.")
         sql = f"SELECT * FROM \"{sales_table}\" LIMIT 20"
         return sql, steps
+

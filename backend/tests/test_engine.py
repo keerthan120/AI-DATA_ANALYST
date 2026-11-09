@@ -26,3 +26,4 @@ def test_duckdb_query_execution(test_engine: DuckDBEngine):
     assert count == 2
     assert rows[0]["region"] == "East"
     assert rows[0]["total"] == 400.5
+
