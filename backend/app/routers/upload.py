@@ -55,27 +55,3 @@ async def list_tables():
     """Returns profiles and preview rows for all registered tables."""
     return db_engine.get_registered_tables_info()
 
-@router.post("/load-samples", response_model=UploadResponse)
-async def load_sample_datasets():
-    """
-    Loads pre-bundled sample datasets (sales_transactions, customers, products) for immediate testing.
-    """
-    sample_files = ["sales_transactions.csv", "customers.csv", "products.csv"]
-    registered: list[TableSchema] = []
-
-    for fname in sample_files:
-        fpath = settings.SAMPLE_DATA_DIR / fname
-        if fpath.exists():
-            t_name = Path(fname).stem
-            schema = db_engine.register_csv(table_name=t_name, file_path=fpath)
-            registered.append(schema)
-
-    if not registered:
-        raise HTTPException(status_code=404, detail="Sample datasets not found on server.")
-
-    return UploadResponse(
-        success=True,
-        message=f"Loaded {len(registered)} sample dataset(s) into memory.",
-        tables=registered
-    )
-

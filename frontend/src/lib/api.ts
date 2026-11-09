@@ -1,4 +1,4 @@
-import { TableSchema, ChatResponse, UserRole, AnomalyRecord } from "@/types";
+import { TableSchema, ChatResponse, AnomalyRecord } from "@/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000/api";
 
@@ -28,23 +28,10 @@ export async function fetchTables(): Promise<TableSchema[]> {
   return res.json();
 }
 
-export async function loadSampleDatasets(): Promise<TableSchema[]> {
-  const res = await fetch(`${API_BASE}/load-samples`, {
-    method: "POST",
-  });
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.detail || "Failed to load sample datasets.");
-  }
-  const data = await res.json();
-  return data.tables;
-}
-
 export async function sendChatMessage(params: {
   sessionId?: string;
   message: string;
   tableNames: string[];
-  userRole: UserRole;
   apiKey?: string;
   model?: string;
   conversationHistory?: { role: string; content: string }[];
@@ -53,13 +40,11 @@ export async function sendChatMessage(params: {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-user-role": params.userRole,
     },
     body: JSON.stringify({
       session_id: params.sessionId || "default-session",
       message: params.message,
       table_names: params.tableNames,
-      user_role: params.userRole,
       api_key: params.apiKey || null,
       model: params.model || null,
       conversation_history: params.conversationHistory || [],
@@ -100,4 +85,3 @@ export async function detectAnomalies(params: {
 
   return res.json();
 }
-

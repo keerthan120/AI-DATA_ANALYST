@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useState, useRef } from "react";
-import { Upload, FileSpreadsheet, Sparkles, AlertCircle, CheckCircle2 } from "lucide-react";
-import { uploadFiles, loadSampleDatasets } from "@/lib/api";
+import { Upload, FileSpreadsheet, AlertCircle, CheckCircle2 } from "lucide-react";
+import { uploadFiles } from "@/lib/api";
 import { TableSchema } from "@/types";
 
 interface FileUploadProps {
@@ -43,36 +43,12 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     }
   };
 
-  const handleLoadSamples = async () => {
-    setError(null);
-    setSuccessMsg(null);
-    setLoading(true);
-    try {
-      const tables = await loadSampleDatasets();
-      onTablesUpdated(tables);
-      setSuccessMsg("Loaded 3 multi-table sample datasets!");
-    } catch (err: any) {
-      setError(err.message || "Failed to load sample datasets.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
           <FileSpreadsheet className="w-4 h-4 text-indigo-400" /> Datasets & Ingestion
         </h2>
-        <button
-          onClick={handleLoadSamples}
-          disabled={loading}
-          className="text-xs flex items-center gap-1.5 px-2.5 py-1 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-lg transition disabled:opacity-50"
-          title="Instant load of sales, customers, and products datasets"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-          <span>Load Sample Data</span>
-        </button>
       </div>
 
       {/* Drag & Drop Area */}
@@ -162,4 +138,3 @@ export const FileUpload: React.FC<FileUploadProps> = ({
     </div>
   );
 };
-

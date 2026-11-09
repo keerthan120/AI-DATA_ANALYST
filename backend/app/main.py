@@ -10,29 +10,13 @@ if str(backend_dir) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routers import upload, chat, auth
+from app.routers import upload, chat
 from app.engine.duckdb_engine import db_engine
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup: Auto-load sample datasets if available
-    sample_files = ["sales_transactions.csv", "customers.csv", "products.csv"]
-    for fname in sample_files:
-        fpath = settings.SAMPLE_DATA_DIR / fname
-        if fpath.exists():
-            t_name = Path(fname).stem
-            try:
-                db_engine.register_csv(table_name=t_name, file_path=fpath)
-                print(f"[Startup] Pre-registered sample dataset view: {t_name}")
-            except Exception as e:
-                print(f"[Startup] Failed to register {fname}: {e}")
-    yield
 
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="Production-grade AI Data Analyst powered by FastAPI, DuckDB, LangGraph, and OpenRouter.",
-    lifespan=lifespan
 )
 
 # CORS Configuration
@@ -47,7 +31,6 @@ app.add_middleware(
 # Include Routers
 app.include_router(upload.router)
 app.include_router(chat.router)
-app.include_router(auth.router)
 
 @app.get("/")
 async def root():

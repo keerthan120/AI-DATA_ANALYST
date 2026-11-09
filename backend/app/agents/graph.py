@@ -8,7 +8,6 @@ from app.agents.viz_agent import VisualizationAgent
 from app.agents.anomaly_agent import AnomalyDetectionAgent
 from app.agents.insight_agent import InsightAgent
 from app.guardrails.input_guard import InputGuardrail
-from app.guardrails.rbac import RBACManager, Permission
 from app.engine.duckdb_engine import db_engine
 from app.models.schemas import ChartType
 
@@ -16,15 +15,6 @@ from app.models.schemas import ChartType
 def input_guardrail_node(state: AgentState) -> dict[str, Any]:
     start_time = time.time()
     query = state.get("message", "")
-    role = state.get("user_role")
-
-    # Check RBAC
-    if not RBACManager.check_permission(role, Permission.QUERY_DATA):
-        return {
-            "guardrail_status": {"passed": False, "violations": ["RBAC permission QUERY_DATA denied."]},
-            "natural_language_answer": f"Access Denied: Role '{role}' does not have permission to query datasets.",
-            "execution_time_ms": round((time.time() - start_time) * 1000, 2)
-        }
 
     is_safe, violations = InputGuardrail.validate_user_query(query)
     if not is_safe:
@@ -37,7 +27,7 @@ def input_guardrail_node(state: AgentState) -> dict[str, Any]:
 
     return {
         "guardrail_status": {"passed": True, "violations": []},
-        "reasoning_steps": ["Input query passed security and RBAC validation."]
+        "reasoning_steps": ["Input query passed security validation."]
     }
 
 # 2. Schema Profiler Node

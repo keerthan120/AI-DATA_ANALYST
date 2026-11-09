@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     
     # File Storage
     UPLOAD_DIR: Path = Path(__file__).resolve().parent.parent / "uploads"
-    SAMPLE_DATA_DIR: Path = Path(__file__).resolve().parent.parent.parent / "sample_data"
     
     # Guardrails and Limits
     MAX_UPLOAD_SIZE_MB: int = 50
@@ -27,10 +26,6 @@ class Settings(BaseSettings):
     
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000", "*"]
-    
-    # Security
-    JWT_SECRET: str = os.getenv("JWT_SECRET", "super-secret-data-analyst-key-2026")
-    DEFAULT_ROLE: str = "Admin"  # Options: Admin, Analyst, Viewer
 
 settings = Settings()
 

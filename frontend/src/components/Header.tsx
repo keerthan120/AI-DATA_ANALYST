@@ -1,20 +1,15 @@
 "use client";
 
 import React, { useState } from "react";
-import { UserRole } from "@/types";
-import { Sparkles, Shield, Key, Database, ChevronDown } from "lucide-react";
+import { Sparkles, Key, Database } from "lucide-react";
 
 interface HeaderProps {
-  userRole: UserRole;
-  onRoleChange: (role: UserRole) => void;
   apiKey: string;
   onApiKeyChange: (key: string) => void;
   tableCount: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  userRole,
-  onRoleChange,
   apiKey,
   onApiKeyChange,
   tableCount,
@@ -51,21 +46,6 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 border border-slate-700/60 text-xs font-medium text-slate-300">
           <Database className="w-3.5 h-3.5 text-indigo-400" />
           <span>{tableCount} {tableCount === 1 ? "Table" : "Tables"} Active</span>
-        </div>
-
-        {/* RBAC Role Selector */}
-        <div className="flex items-center gap-2 bg-slate-800 border border-slate-700/60 rounded-lg px-2.5 py-1">
-          <Shield className="w-3.5 h-3.5 text-amber-400" />
-          <span className="text-xs text-slate-400">Role:</span>
-          <select
-            value={userRole}
-            onChange={(e) => onRoleChange(e.target.value as UserRole)}
-            className="bg-transparent text-xs font-semibold text-amber-300 focus:outline-none cursor-pointer"
-          >
-            <option value="Admin" className="bg-slate-900 text-slate-200">Admin</option>
-            <option value="Analyst" className="bg-slate-900 text-slate-200">Analyst</option>
-            <option value="Viewer" className="bg-slate-900 text-slate-200">Viewer</option>
-          </select>
         </div>
 
         {/* OpenRouter API Key Setting */}
@@ -120,4 +100,3 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
-

@@ -1,5 +1,3 @@
-export type UserRole = "Admin" | "Analyst" | "Viewer";
-
 export interface ColumnInfo {
   name: string;
   dtype: string;
@@ -66,4 +64,3 @@ export interface ChatResponse {
   };
   execution_time_ms: number;
 }
-

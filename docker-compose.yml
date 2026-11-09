@@ -12,9 +12,7 @@ services:
     environment:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.0-flash-exp:free}
-      - DEFAULT_ROLE=Admin
     volumes:
-      - ./sample_data:/app/sample_data
       - ./uploads:/app/uploads
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -38,4 +36,3 @@ services:
 networks:
   default:
     name: data-analyst-net
-

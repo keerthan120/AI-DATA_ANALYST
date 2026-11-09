@@ -12,9 +12,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy source code and sample data
+# Copy source code
 COPY app/ ./app/
-COPY sample_data/ ../sample_data/
 
 EXPOSE 8000
 

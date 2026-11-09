@@ -4,7 +4,6 @@ import React, { useState, useRef, useEffect } from "react";
 import {
   ChatMessage,
   ChatResponse,
-  UserRole,
   TableSchema,
 } from "@/types";
 import { sendChatMessage } from "@/lib/api";
@@ -27,7 +26,6 @@ import {
 
 interface ChatInterfaceProps {
   tables: TableSchema[];
-  userRole: UserRole;
   apiKey: string;
 }
 
@@ -42,7 +40,6 @@ const EXAMPLE_QUESTIONS = [
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   tables,
-  userRole,
   apiKey,
 }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -92,7 +89,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       const responsePayload = await sendChatMessage({
         message: text,
         tableNames: tables.map((t) => t.table_name),
-        userRole,
         apiKey,
         conversationHistory: history,
       });

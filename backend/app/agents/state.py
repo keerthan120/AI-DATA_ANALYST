@@ -1,12 +1,11 @@
 from typing import Any, Optional, TypedDict
-from app.models.schemas import ChartConfig, AnomalyRecord, UserRole
+from app.models.schemas import ChartConfig, AnomalyRecord
 
 class AgentState(TypedDict, total=False):
     # User Inputs
     session_id: str
     message: str
     table_names: list[str]
-    user_role: UserRole
     api_key: Optional[str]
     model: Optional[str]
     conversation_history: list[dict[str, str]]

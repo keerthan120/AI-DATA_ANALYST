@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { TableSchema, UserRole } from "@/types";
+import { TableSchema } from "@/types";
 import { fetchTables } from "@/lib/api";
 import { Header } from "@/components/Header";
 import { FileUpload } from "@/components/FileUpload";
@@ -10,7 +10,6 @@ import { ChatInterface } from "@/components/ChatInterface";
 
 export default function Home() {
   const [tables, setTables] = useState<TableSchema[]>([]);
-  const [userRole, setUserRole] = useState<UserRole>("Admin");
   const [apiKey, setApiKey] = useState<string>("");
 
   useEffect(() => {
@@ -23,8 +22,6 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col">
       <Header
-        userRole={userRole}
-        onRoleChange={setUserRole}
         apiKey={apiKey}
         onApiKeyChange={setApiKey}
         tableCount={tables.length}
@@ -44,7 +41,6 @@ export default function Home() {
         <div className="lg:col-span-8 xl:col-span-8">
           <ChatInterface
             tables={tables}
-            userRole={userRole}
             apiKey={apiKey}
           />
         </div>
@@ -52,4 +48,3 @@ export default function Home() {
     </div>
   );
 }
-

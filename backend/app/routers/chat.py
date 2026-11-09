@@ -31,7 +31,6 @@ async def chat_with_agent(request: ChatRequest):
         "session_id": request.session_id,
         "message": request.message,
         "table_names": request.table_names,
-        "user_role": request.user_role,
         "api_key": request.api_key,
         "model": request.model,
         "conversation_history": [m.model_dump() for m in request.conversation_history],

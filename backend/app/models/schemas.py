@@ -2,11 +2,6 @@ from typing import Any, Optional, Literal
 from pydantic import BaseModel, Field
 from enum import Enum
 
-class UserRole(str, Enum):
-    ADMIN = "Admin"
-    ANALYST = "Analyst"
-    VIEWER = "Viewer"
-
 class ColumnInfo(BaseModel):
     name: str
     dtype: str
@@ -67,7 +62,6 @@ class ChatRequest(BaseModel):
     session_id: str = "default-session"
     message: str
     table_names: list[str] = []
-    user_role: UserRole = UserRole.ADMIN
     api_key: Optional[str] = None
     model: Optional[str] = None
     conversation_history: list[ChatMessage] = []
