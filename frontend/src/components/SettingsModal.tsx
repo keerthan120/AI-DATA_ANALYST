@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { X, Key, Cpu, Sliders, Database, RotateCcw, Check, Sparkles } from "lucide-react";
-import { clearCacheApi } from "@/lib/api";
+import { X, User, Mail, Building2, Shield, Lock, Check } from "lucide-react";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -10,58 +9,59 @@ interface SettingsModalProps {
   onSaved?: () => void;
 }
 
-export interface AppSettings {
-  apiKey: string;
-  model: string;
-  maxRows: number;
-  anomalyThreshold: number;
-  currency: string;
-}
-
-export const DEFAULT_SETTINGS: AppSettings = {
-  apiKey: "",
-  model: "google/gemini-2.0-flash",
-  maxRows: 100,
-  anomalyThreshold: 2.5,
-  currency: "INR",
-};
-
 export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) {
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
-  const [showKey, setShowKey] = useState(false);
-  const [savedSuccess, setSavedSuccess] = useState(false);
-  const [clearingCache, setClearingCache] = useState(false);
-  const [cacheCleared, setCacheCleared] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [organization, setOrganization] = useState("Digital Back Office");
+  const [role, setRole] = useState("Lead Data Analyst");
 
-  const handleClearCache = async () => {
-    setClearingCache(true);
-    try {
-      await clearCacheApi();
-      setCacheCleared(true);
-      setTimeout(() => setCacheCleared(false), 2000);
-    } catch (e) {
-      console.error("Failed to clear cache:", e);
-    } finally {
-      setClearingCache(false);
-    }
-  };
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+
+  const [savedSuccess, setSavedSuccess] = useState(false);
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem("analyst_settings");
-      if (stored) {
-        setSettings(JSON.parse(stored));
+      const storedUser = localStorage.getItem("auth_user");
+      if (storedUser) {
+        const u = JSON.parse(storedUser);
+        setFullName(u.full_name || u.fullName || u.email?.split("@")[0] || "Keerthan");
+        setEmail(u.email || "user@digitalbackoffice.co.uk");
+      } else {
+        setFullName("Keerthan");
+        setEmail("user@digitalbackoffice.co.uk");
       }
-    } catch (e) {
-      console.error("Error loading settings:", e);
+    } catch {
+      setFullName("Keerthan");
+      setEmail("user@digitalbackoffice.co.uk");
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const handleSave = () => {
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError(null);
+
+    if (newPassword && newPassword !== confirmPassword) {
+      setPasswordError("New passwords do not match.");
+      return;
+    }
+
     try {
-      localStorage.setItem("analyst_settings", JSON.stringify(settings));
+      const stored = localStorage.getItem("auth_user");
+      const current = stored ? JSON.parse(stored) : {};
+      const updated = {
+        ...current,
+        full_name: fullName,
+        email: email,
+        organization: organization,
+        role: role,
+      };
+      localStorage.setItem("auth_user", JSON.stringify(updated));
+
       setSavedSuccess(true);
       setTimeout(() => {
         setSavedSuccess(false);
@@ -69,13 +69,8 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
         onClose();
       }, 700);
     } catch (e) {
-      console.error("Error saving settings:", e);
+      console.error("Error saving profile settings:", e);
     }
-  };
-
-  const handleReset = () => {
-    setSettings(DEFAULT_SETTINGS);
-    localStorage.removeItem("analyst_settings");
   };
 
   return (
@@ -85,11 +80,11 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
         <div className="px-6 py-4 border-b border-[#e2e8f0] flex items-center justify-between bg-[#f8fafc]">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-[#2cb8b2]/10 border border-[#2cb8b2]/20 flex items-center justify-center text-[#2cb8b2]">
-              <Sliders className="w-4 h-4" />
+              <User className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-[#0f172a]">Settings & Configuration</h3>
-              <p className="text-xs text-[#64748b]">Configure AI models, engine parameters, and caching</p>
+              <h3 className="text-sm font-semibold text-[#0f172a]">Profile & User Settings</h3>
+              <p className="text-xs text-[#64748b]">Manage your account details and login credentials</p>
             </div>
           </div>
           <button
@@ -100,128 +95,122 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
           </button>
         </div>
 
-        {/* Body */}
-        <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
-          {/* Section: LLM Model Selection */}
-          <div className="space-y-2">
-            <label className="text-xs font-semibold text-[#334155] flex items-center gap-1.5 uppercase tracking-wider">
-              <Cpu className="w-3.5 h-3.5 text-[#2cb8b2]" />
-              <span>Inference Model</span>
-            </label>
-            <select
-              value={settings.model}
-              onChange={(e) => setSettings({ ...settings, model: e.target.value })}
-              className="w-full bg-[#f8fafc] border border-[#cbd5e1] rounded-xl px-3 py-2.5 text-xs text-[#0f172a] focus:outline-none focus:border-[#2cb8b2] focus:ring-1 focus:ring-[#2cb8b2]"
-            >
-              <option value="google/gemini-2.0-flash">Google Gemini 2.0 Flash (Fast & Accurate)</option>
-              <option value="anthropic/claude-3.5-sonnet">Anthropic Claude 3.5 Sonnet (Advanced Reasoning)</option>
-              <option value="openai/gpt-4o">OpenAI GPT-4o (Multimodal Data Engine)</option>
-              <option value="deepseek/deepseek-chat">DeepSeek V3 (High-Precision SQL Code)</option>
-              <option value="meta-llama/llama-3.3-70b-instruct">Meta Llama 3.3 70B (Open Weights)</option>
-            </select>
-            <p className="text-[11px] text-[#64748b]">
-              Selected model handles natural language intent decomposition, SQL synthesis, and executive summaries.
-            </p>
-          </div>
-
-          {/* Section: Custom OpenRouter API Key */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-[#334155] flex items-center gap-1.5 uppercase tracking-wider">
-                <Key className="w-3.5 h-3.5 text-[#2cb8b2]" />
-                <span>OpenRouter API Key (Optional)</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => setShowKey(!showKey)}
-                className="text-[11px] text-[#2cb8b2] hover:underline"
-              >
-                {showKey ? "Hide" : "Show"}
-              </button>
-            </div>
-            <input
-              type={showKey ? "text" : "password"}
-              value={settings.apiKey}
-              onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
-              placeholder="sk-or-v1-..."
-              className="w-full bg-[#f8fafc] border border-[#cbd5e1] rounded-xl px-3 py-2.5 text-xs text-[#0f172a] placeholder-[#94a3b8] focus:outline-none focus:border-[#2cb8b2] focus:ring-1 focus:ring-[#2cb8b2] font-mono"
-            />
-            <p className="text-[11px] text-[#64748b]">
-              Leave blank to use the backend's pre-configured high-precision semantic engine.
-            </p>
-          </div>
-
-          {/* Section: Max Result Rows & Anomaly Threshold */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[#334155]">Max Result Rows</label>
-              <select
-                value={settings.maxRows}
-                onChange={(e) => setSettings({ ...settings, maxRows: Number(e.target.value) })}
-                className="w-full bg-[#f8fafc] border border-[#cbd5e1] rounded-xl px-3 py-2 text-xs text-[#0f172a] focus:outline-none focus:border-[#2cb8b2]"
-              >
-                <option value={50}>50 rows</option>
-                <option value={100}>100 rows</option>
-                <option value={500}>500 rows</option>
-                <option value={1000}>1,000 rows</option>
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-[#334155]">Outlier Threshold (|Z|)</label>
-              <select
-                value={settings.anomalyThreshold}
-                onChange={(e) => setSettings({ ...settings, anomalyThreshold: Number(e.target.value) })}
-                className="w-full bg-[#f8fafc] border border-[#cbd5e1] rounded-xl px-3 py-2 text-xs text-[#0f172a] focus:outline-none focus:border-[#2cb8b2]"
-              >
-                <option value={2.0}>Z &gt; 2.0 (Strict)</option>
-                <option value={2.5}>Z &gt; 2.5 (Standard)</option>
-                <option value={3.0}>Z &gt; 3.0 (Severe Only)</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Section: Cache Status */}
-          <div className="p-3.5 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Database className="w-4 h-4 text-[#2cb8b2]" />
+        {/* Form Body */}
+        <form onSubmit={handleSave} className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+          {/* Profile Details */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[#64748b] mb-3 flex items-center gap-1.5">
+              <Shield className="w-3.5 h-3.5 text-[#2cb8b2]" />
+              <span>Personal Information</span>
+            </h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <p className="text-xs font-medium text-[#0f172a]">In-Memory Query Cache</p>
-                <p className="text-[11px] text-[#64748b]">Active LRU caching for instant &lt;1ms responses</p>
+                <label className="block text-xs font-medium text-[#334155] mb-1">Full Name</label>
+                <div className="relative">
+                  <User className="w-3.5 h-3.5 text-[#94a3b8] absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0f172a] focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-1 focus:ring-[#2cb8b2]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[#334155] mb-1">Email Address</label>
+                <div className="relative">
+                  <Mail className="w-3.5 h-3.5 text-[#94a3b8] absolute left-3 top-2.5" />
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0f172a] focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-1 focus:ring-[#2cb8b2]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[#334155] mb-1">Company / Organization</label>
+                <div className="relative">
+                  <Building2 className="w-3.5 h-3.5 text-[#94a3b8] absolute left-3 top-2.5" />
+                  <input
+                    type="text"
+                    value={organization}
+                    onChange={(e) => setOrganization(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0f172a] focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-1 focus:ring-[#2cb8b2]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[#334155] mb-1">Role / Designation</label>
+                <input
+                  type="text"
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="w-full px-3 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0f172a] focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-1 focus:ring-[#2cb8b2]"
+                />
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleClearCache}
-              disabled={clearingCache}
-              className="px-2.5 py-1 text-xs font-medium border border-[#cbd5e1] bg-white hover:bg-[#f1f5f9] text-[#334155] rounded-lg transition disabled:opacity-50 flex items-center gap-1.5"
-            >
-              {cacheCleared ? (
-                <>
-                  <Check className="w-3 h-3 text-[#2cb8b2]" />
-                  <span>Cleared!</span>
-                </>
-              ) : clearingCache ? (
-                <span>Clearing...</span>
-              ) : (
-                <span>Clear Cache</span>
-              )}
-            </button>
           </div>
-        </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-[#e2e8f0] flex items-center justify-between bg-[#f8fafc]">
-          <button
-            type="button"
-            onClick={handleReset}
-            className="flex items-center gap-1.5 text-xs text-[#64748b] hover:text-[#0f172a] transition"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Reset Defaults</span>
-          </button>
+          <hr className="border-[#e2e8f0]" />
 
-          <div className="flex items-center gap-2">
+          {/* Change Password */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[#64748b] mb-3 flex items-center gap-1.5">
+              <Lock className="w-3.5 h-3.5 text-[#2cb8b2]" />
+              <span>Change Password</span>
+            </h4>
+
+            {passwordError && (
+              <div className="mb-3 p-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+                {passwordError}
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-[#334155] mb-1">Current Password</label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Enter current password"
+                  className="w-full px-3 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0f172a] focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-1 focus:ring-[#2cb8b2]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-[#334155] mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="New password"
+                    className="w-full px-3 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0f172a] focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-1 focus:ring-[#2cb8b2]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-[#334155] mb-1">Confirm Password</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="w-full px-3 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs text-[#0f172a] focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-1 focus:ring-[#2cb8b2]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer Controls */}
+          <div className="pt-4 border-t border-[#e2e8f0] flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={onClose}
@@ -230,21 +219,20 @@ export function SettingsModal({ isOpen, onClose, onSaved }: SettingsModalProps) 
               Cancel
             </button>
             <button
-              type="button"
-              onClick={handleSave}
+              type="submit"
               className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-[#2cb8b2] hover:bg-[#23a8a2] rounded-xl transition shadow-xs"
             >
               {savedSuccess ? (
                 <>
                   <Check className="w-3.5 h-3.5" />
-                  <span>Saved!</span>
+                  <span>Profile Saved!</span>
                 </>
               ) : (
                 <span>Save Changes</span>
               )}
             </button>
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );

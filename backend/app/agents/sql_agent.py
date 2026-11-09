@@ -230,6 +230,46 @@ Schema Context:
 
         date_col = find_column(["order_date", "date", "created_at", "timestamp", "time"])
 
+        # Multi-table relational join detection (e.g. regions + sales)
+        if not metric_col and len(all_schemas) > 1:
+            for other in all_schemas:
+                if other.table_name != table_name:
+                    shared_cols = [c.name for c in columns if c.name in [oc.name for oc in other.columns]]
+                    other_num = [c.name for c in other.columns if any(t in c.dtype.upper() for t in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "BIGINT"])]
+                    if shared_cols and other_num:
+                        join_key = shared_cols[0]
+                        o_metric = other_num[0]
+                        for cand in ["net_revenue_inr", "gross_revenue_inr", "profit_inr", "total_amount"]:
+                            if cand in other_num:
+                                o_metric = cand
+                                break
+                        display_col = dim_col or (col_names[1] if len(col_names) > 1 and "name" in col_names[1].lower() else col_names[0])
+                        steps.append(f"Auto-detected relational join between '{table_name}' and '{other.table_name}' on '{join_key}'.")
+                        sql = f"""
+SELECT a."{display_col}",
+       ROUND(SUM(b."{o_metric}"), 2) AS total_{o_metric},
+       COUNT(*) AS transaction_count
+FROM "{table_name}" a
+JOIN "{other.table_name}" b ON a."{join_key}" = b."{join_key}"
+GROUP BY a."{display_col}"
+ORDER BY total_{o_metric} DESC
+LIMIT 10;
+"""
+                        pandas_code = f"""import pandas as pd
+
+df_a = pd.read_csv('{table_name}.csv')
+df_b = pd.read_csv('{other.table_name}.csv')
+merged = pd.merge(df_a, df_b, on='{join_key}')
+result = (
+    merged.groupby('{display_col}', as_index=False)
+    .agg(total_{o_metric}=('{o_metric}', 'sum'), count=('{join_key}', 'count'))
+    .round({{'total_{o_metric}': 2}})
+    .sort_values(by='total_{o_metric}', ascending=False)
+    .head(10)
+)
+print(result)"""
+                        return sql.strip(), pandas_code.strip(), steps
+
         # PATTERN A: Region / Dimension Ranking or Highest ("which region generated highest revenue", "top 5 products", etc.)
         if dim_col and (any(k in q for k in ["which", "highest", "top", "best", "lead", "most", "compare"]) or "region" in q or "product" in q or "customer" in q):
             limit_n = 10
@@ -238,8 +278,9 @@ Schema Context:
             elif "highest" in q or "which" in q:
                 limit_n = 5
 
-            steps.append(f"Identified ranking aggregation for dimension '{dim_col}' by metric '{metric_col}'.")
-            sql = f"""
+            if metric_col:
+                steps.append(f"Identified ranking aggregation for dimension '{dim_col}' by metric '{metric_col}'.")
+                sql = f"""
 SELECT "{dim_col}",
        ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
        ROUND(AVG("{metric_col}"), 2) AS avg_{metric_col},
@@ -250,7 +291,7 @@ GROUP BY "{dim_col}"
 ORDER BY total_{metric_col} DESC
 LIMIT {limit_n};
 """
-            pandas_code = f"""import pandas as pd
+                pandas_code = f"""import pandas as pd
 
 df = pd.read_csv('{table_name}.csv')
 result = (
@@ -265,12 +306,34 @@ result = (
     .head({limit_n})
 )
 print(result)"""
+            else:
+                steps.append(f"Identified frequency distribution for dimension '{dim_col}'.")
+                sql = f"""
+SELECT "{dim_col}",
+       COUNT(*) AS record_count
+FROM "{table_name}"
+WHERE "{dim_col}" IS NOT NULL
+GROUP BY "{dim_col}"
+ORDER BY record_count DESC
+LIMIT {limit_n};
+"""
+                pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+result = (
+    df.groupby('{dim_col}', as_index=False)
+    .agg(record_count=('{dim_col}', 'count'))
+    .sort_values(by='record_count', ascending=False)
+    .head({limit_n})
+)
+print(result)"""
             return sql.strip(), pandas_code.strip(), steps
 
         # PATTERN B: Temporal Trend / Monthly ("monthly sales trends", "trend over time")
         if date_col and any(k in q for k in ["trend", "monthly", "over time", "month", "seasonality", "timeline", "by month"]):
-            steps.append(f"Identified temporal trend query on date column '{date_col}' and metric '{metric_col}'.")
-            sql = f"""
+            steps.append(f"Identified temporal trend query on date column '{date_col}' and metric '{metric_col or 'records'}'.")
+            if metric_col:
+                sql = f"""
 SELECT strftime('%Y-%m', CAST("{date_col}" AS DATE)) AS period,
        ROUND(SUM("{metric_col}"), 2) AS monthly_{metric_col},
        COUNT(*) AS record_count
@@ -279,7 +342,7 @@ WHERE "{date_col}" IS NOT NULL
 GROUP BY period
 ORDER BY period ASC;
 """
-            pandas_code = f"""import pandas as pd
+                pandas_code = f"""import pandas as pd
 
 df = pd.read_csv('{table_name}.csv')
 df['period'] = pd.to_datetime(df['{date_col}']).dt.strftime('%Y-%m')
@@ -293,13 +356,33 @@ result = (
     .sort_values(by='period', ascending=True)
 )
 print(result)"""
+            else:
+                sql = f"""
+SELECT strftime('%Y-%m', CAST("{date_col}" AS DATE)) AS period,
+       COUNT(*) AS record_count
+FROM "{table_name}"
+WHERE "{date_col}" IS NOT NULL
+GROUP BY period
+ORDER BY period ASC;
+"""
+                pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+df['period'] = pd.to_datetime(df['{date_col}']).dt.strftime('%Y-%m')
+result = (
+    df.groupby('period', as_index=False)
+    .agg(record_count=('{date_col}', 'count'))
+    .sort_values(by='period', ascending=True)
+)
+print(result)"""
             return sql.strip(), pandas_code.strip(), steps
 
         # PATTERN C: Underperforming / Lowest / Bottom
         if any(k in q for k in ["underperform", "lowest", "worst", "least", "bottom"]):
             dim = dim_col or (col_names[0] if col_names else "id")
-            steps.append(f"Identified low-performance query for bottom '{dim}' by '{metric_col}'.")
-            sql = f"""
+            if metric_col:
+                steps.append(f"Identified low-performance query for bottom '{dim}' by '{metric_col}'.")
+                sql = f"""
 SELECT "{dim}",
        ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
        COUNT(*) AS frequency
@@ -309,7 +392,7 @@ GROUP BY "{dim}"
 ORDER BY total_{metric_col} ASC
 LIMIT 5;
 """
-            pandas_code = f"""import pandas as pd
+                pandas_code = f"""import pandas as pd
 
 df = pd.read_csv('{table_name}.csv')
 result = (
@@ -320,12 +403,34 @@ result = (
     .head(5)
 )
 print(result)"""
+            else:
+                steps.append(f"Identified lowest count for dimension '{dim}'.")
+                sql = f"""
+SELECT "{dim}",
+       COUNT(*) AS frequency
+FROM "{table_name}"
+WHERE "{dim}" IS NOT NULL
+GROUP BY "{dim}"
+ORDER BY frequency ASC
+LIMIT 5;
+"""
+                pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+result = (
+    df.groupby('{dim}', as_index=False)
+    .agg(frequency=('{dim}', 'count'))
+    .sort_values(by='frequency', ascending=True)
+    .head(5)
+)
+print(result)"""
             return sql.strip(), pandas_code.strip(), steps
 
-        # PATTERN D: General Distribution / Grouping
-        target_dim = dim_col or (columns[0].name if columns else "id")
-        steps.append(f"Aggregated metric '{metric_col}' grouped by '{target_dim}'.")
-        sql = f"""
+        # PATTERN D: General Distribution / Grouping (e.g. piechart, breakdown)
+        target_dim = dim_col or (col_names[1] if len(col_names) > 1 and "name" in col_names[1].lower() else col_names[0])
+        if metric_col:
+            steps.append(f"Aggregated metric '{metric_col}' grouped by '{target_dim}'.")
+            sql = f"""
 SELECT "{target_dim}",
        ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
        COUNT(*) AS count
@@ -335,7 +440,7 @@ GROUP BY "{target_dim}"
 ORDER BY total_{metric_col} DESC
 LIMIT 10;
 """
-        pandas_code = f"""import pandas as pd
+            pandas_code = f"""import pandas as pd
 
 df = pd.read_csv('{table_name}.csv')
 result = (
@@ -343,6 +448,27 @@ result = (
     .agg(total_{metric_col}=('{metric_col}', 'sum'), count=('{target_dim}', 'count'))
     .round({{'total_{metric_col}': 2}})
     .sort_values(by='total_{metric_col}', ascending=False)
+    .head(10)
+)
+print(result)"""
+        else:
+            steps.append(f"Analyzed categorical distribution across '{target_dim}'.")
+            sql = f"""
+SELECT "{target_dim}",
+       COUNT(*) AS record_count
+FROM "{table_name}"
+WHERE "{target_dim}" IS NOT NULL
+GROUP BY "{target_dim}"
+ORDER BY record_count DESC
+LIMIT 10;
+"""
+            pandas_code = f"""import pandas as pd
+
+df = pd.read_csv('{table_name}.csv')
+result = (
+    df.groupby('{target_dim}', as_index=False)
+    .agg(record_count=('{target_dim}', 'count'))
+    .sort_values(by='record_count', ascending=False)
     .head(10)
 )
 print(result)"""

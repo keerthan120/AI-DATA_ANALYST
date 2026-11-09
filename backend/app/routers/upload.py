@@ -56,9 +56,18 @@ async def upload_csv_files(
     # Associate tables with conversation if provided
     if conversation_id:
         conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
-        if conv:
+        new_names = [t.table_name for t in registered_tables]
+        if not conv:
+            conv = Conversation(
+                id=conversation_id,
+                title=f"Analysis of {new_names[0]}" if new_names else "New Analysis",
+                active_tables=json.dumps(new_names)
+            )
+            db.add(conv)
+            db.commit()
+        else:
             existing = conv.get_tables_list()
-            new_tables = list(dict.fromkeys(existing + [t.table_name for t in registered_tables]))
+            new_tables = list(dict.fromkeys(existing + new_names))
             conv.set_tables_list(new_tables)
             db.commit()
 
@@ -74,12 +83,15 @@ async def list_tables(conversation_id: Optional[str] = None, db: Session = Depen
     Returns profiles and preview rows for registered tables.
     If conversation_id is provided, filters tables scoped to that conversation.
     """
+    db_engine.auto_register_uploads()
     all_tables = db_engine.get_registered_tables_info()
     if conversation_id:
         conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
         if conv:
             allowed = set(conv.get_tables_list())
-            return [t for t in all_tables if t.table_name in allowed]
+            matched = [t for t in all_tables if t.table_name in allowed]
+            if matched:
+                return matched
     return all_tables
 
 @router.post("/load-samples", response_model=UploadResponse)

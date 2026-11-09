@@ -45,18 +45,18 @@ class VisualizationAgent:
         is_trend_query = any(term in q_lower for term in ["trend", "over time", "monthly", "daily", "timeline", "history"])
 
         # 1. Explicit user request takes highest priority
-        if re.search(r'\bbar\b', q_lower):
+        if any(term in q_lower for term in ["bar", "barchart", "column"]):
             chosen_type = ChartType.BAR
-        elif re.search(r'\bpie\b', q_lower):
+        elif any(term in q_lower for term in ["pie", "piechart", "donut", "doughnut"]):
             chosen_type = ChartType.PIE
-        elif re.search(r'\bscatter\b', q_lower):
+        elif any(term in q_lower for term in ["scatter", "scatterplot", "bubble"]):
             chosen_type = ChartType.SCATTER
             if len(numeric_keys) >= 2:
                 x_key = numeric_keys[0]
                 y_keys = [numeric_keys[1]]
-        elif re.search(r'\bline\b', q_lower):
+        elif any(term in q_lower for term in ["line", "linechart"]):
             chosen_type = ChartType.LINE
-        elif re.search(r'\barea\b', q_lower):
+        elif any(term in q_lower for term in ["area", "areachart"]):
             chosen_type = ChartType.AREA
         # 2. Heuristic inference based on temporal context
         elif is_date_col or is_trend_query:

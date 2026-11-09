@@ -48,3 +48,4 @@ export function BrandLogo({ size = "md", showText = true }: BrandLogoProps) {
     </div>
   );
 }
+

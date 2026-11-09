@@ -22,7 +22,8 @@ import { ChartViewer } from "@/components/ChartViewer";
 import { AnomalyViewer } from "@/components/AnomalyViewer";
 import { MarkdownRenderer } from "@/components/MarkdownRenderer";
 import { BrandLogo } from "@/components/BrandLogo";
-import { SettingsModal, AppSettings, DEFAULT_SETTINGS } from "@/components/SettingsModal";
+import { SettingsModal } from "@/components/SettingsModal";
+import { DatasetViewerModal } from "@/components/DatasetViewerModal";
 import {
   Send,
   Plus,
@@ -57,10 +58,11 @@ export default function Home() {
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState("");
-  const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [datasetViewerOpen, setDatasetViewerOpen] = useState(false);
   const [activeTabs, setActiveTabs] = useState<Record<string, "findings" | "chart" | "data" | "sql">>({});
   const [codeMode, setCodeMode] = useState<Record<string, "sql" | "pandas">>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -148,8 +150,14 @@ export default function Home() {
   // Load selected conversation from DB
   useEffect(() => {
     if (!activeConvId) {
-      setTables([]);
-      setDynamicSuggestions([]);
+      fetchTables()
+        .then((t) => {
+          if (t && t.length > 0) {
+            setTables(t);
+            updateDynamicSuggestions(t);
+          }
+        })
+        .catch(() => {});
       return;
     }
     setLoadingHistory(true);
@@ -165,11 +173,16 @@ export default function Home() {
         setMessages(loaded);
 
         try {
-          const convTables = await fetchTables(activeConvId);
-          setTables(convTables);
-          updateDynamicSuggestions(convTables);
+          let convTables = await fetchTables(activeConvId);
+          if (!convTables || convTables.length === 0) {
+            convTables = await fetchTables();
+          }
+          if (convTables && convTables.length > 0) {
+            setTables(convTables);
+            updateDynamicSuggestions(convTables);
+          }
         } catch {
-          setTables([]);
+          // keep existing tables
         }
       })
       .catch((err) => {
@@ -196,17 +209,25 @@ export default function Home() {
     }
   }, [inputValue]);
 
-  // Handle CSV file selection / attachment
+  // Handle CSV file selection / attachment (Multi-file upload support)
   const handleFileSelect = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const file = files[0];
-    if (!file.name.toLowerCase().endsWith(".csv")) {
-      setStatusNotice("Please attach a valid CSV file (.csv).");
+    const csvFiles = Array.from(files).filter((f) => f.name.toLowerCase().endsWith(".csv"));
+    if (csvFiles.length === 0) {
+      setStatusNotice("Please attach valid CSV files (.csv).");
       setTimeout(() => setStatusNotice(null), 3000);
       return;
     }
-    setAttachedFile(file);
-    setStatusNotice(`Attached '${file.name}'. Type your question or send to profile.`);
+    setAttachedFiles((prev) => {
+      const merged = [...prev];
+      csvFiles.forEach((f) => {
+        if (!merged.some((m) => m.name === f.name)) {
+          merged.push(f);
+        }
+      });
+      return merged;
+    });
+    setStatusNotice(`Attached ${csvFiles.length} CSV file(s). Ask any question or send to profile.`);
     setTimeout(() => setStatusNotice(null), 3500);
   };
 
@@ -242,7 +263,7 @@ export default function Home() {
 
   const handleSend = async (queryText?: string) => {
     const text = (queryText !== undefined ? queryText : inputValue).trim();
-    if (!text && !attachedFile) return;
+    if (!text && attachedFiles.length === 0) return;
     if (loading) return;
 
     const currentSessionId = activeConvId || `conv-${Date.now()}`;
@@ -253,14 +274,14 @@ export default function Home() {
 
     setLoading(true);
 
-    // If a file is attached, upload it first to DuckDB scoped to this conversation!
-    if (attachedFile) {
-      const fileToUpload = attachedFile;
-      setAttachedFile(null);
-      setStatusNotice(`Uploading and profiling '${fileToUpload.name}' into DuckDB...`);
+    // If files are attached, upload all into DuckDB scoped to this conversation!
+    if (attachedFiles.length > 0) {
+      const filesToUpload = [...attachedFiles];
+      setAttachedFiles([]);
+      setStatusNotice(`Uploading and profiling ${filesToUpload.length} CSV file(s) into DuckDB...`);
 
       try {
-        const uploadedTables = await uploadFiles([fileToUpload], currentSessionId);
+        const uploadedTables = await uploadFiles(filesToUpload, currentSessionId);
         activeTableList = uploadedTables;
         setTables(uploadedTables);
         updateDynamicSuggestions(uploadedTables);
@@ -291,18 +312,6 @@ export default function Home() {
         .filter((m) => m.role === "user" || m.role === "assistant")
         .slice(-6)
         .map((m) => ({ role: m.role, content: m.content }));
-
-      // Load settings from localStorage if set
-      let customKey: string | undefined = undefined;
-      let customModel: string | undefined = undefined;
-      try {
-        const storedSettings = localStorage.getItem("analyst_settings");
-        if (storedSettings) {
-          const s: AppSettings = JSON.parse(storedSettings);
-          if (s.apiKey) customKey = s.apiKey;
-          if (s.model) customModel = s.model;
-        }
-      } catch {}
 
       const responsePayload = await sendChatMessage({
         sessionId: currentSessionId,
@@ -350,7 +359,7 @@ export default function Home() {
     setActiveConvId(null);
     setMessages([]);
     setTables([]);
-    setAttachedFile(null);
+    setAttachedFiles([]);
     setDynamicSuggestions([]);
   };
 
@@ -435,15 +444,24 @@ export default function Home() {
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onSaved={() => {
-          setStatusNotice("Settings saved successfully.");
+          setStatusNotice("Profile settings updated successfully.");
           setTimeout(() => setStatusNotice(null), 2500);
         }}
       />
 
-      {/* Hidden File Input */}
+      {/* Dataset Table Viewer Modal */}
+      <DatasetViewerModal
+        isOpen={datasetViewerOpen}
+        onClose={() => setDatasetViewerOpen(false)}
+        tables={tables}
+        onSelectPrompt={(p) => handleSend(p)}
+      />
+
+      {/* Hidden File Input with Multiple File Selection */}
       <input
         ref={fileInputRef}
         type="file"
+        multiple
         accept=".csv"
         className="hidden"
         onChange={(e) => handleFileSelect(e.target.files)}
@@ -580,6 +598,17 @@ export default function Home() {
 
           {/* Right Header Controls */}
           <div className="flex items-center gap-2">
+            {tables.length > 0 && (
+              <button
+                onClick={() => setDatasetViewerOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#b2e8e5] bg-[#eefaf9] hover:bg-[#dff5f3] text-xs font-semibold text-[#0f766e] transition shadow-2xs"
+                title="View full CSV table schema and rows"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-[#2cb8b2]" />
+                <span>View Dataset ({tables.length})</span>
+              </button>
+            )}
+
             {messages.length > 0 && (
               <button
                 onClick={exportAnalysisReport}
@@ -594,7 +623,7 @@ export default function Home() {
             <button
               onClick={() => setSettingsOpen(true)}
               className="p-2 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] hover:bg-white text-[#64748b] hover:text-[#0f172a] transition shadow-xs"
-              title="Settings"
+              title="Profile & Settings"
             >
               <SettingsIcon className="w-4 h-4" />
             </button>
@@ -617,9 +646,31 @@ export default function Home() {
           </div>
         )}
 
-        {/* Central Chat / Message Thread Container */}
+        {/* Central Chat / Message Thread Container (Expanded to eliminate empty space) */}
         <div className="flex-1 overflow-y-auto px-4 py-6">
-          <div className="max-w-3xl mx-auto space-y-6">
+          <div className="max-w-5xl xl:max-w-6xl mx-auto space-y-6">
+            {/* Active Dataset Banner whenever tables are loaded */}
+            {tables.length > 0 && (
+              <div className="flex items-center justify-between p-3 px-4 rounded-2xl bg-[#eefaf9] border border-[#b2e8e5] text-xs shadow-2xs">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <FileSpreadsheet className="w-4 h-4 text-[#2cb8b2] shrink-0" />
+                  <div className="truncate">
+                    <span className="font-bold text-[#0f766e]">
+                      Active Dataset: {tables.map((t) => `${t.table_name}.csv`).join(", ")}
+                    </span>
+                    <span className="text-[#0d9488] ml-2 font-mono">
+                      ({tables.reduce((acc, t) => acc + t.row_count, 0).toLocaleString()} records)
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setDatasetViewerOpen(true)}
+                  className="font-bold text-[#2cb8b2] hover:text-[#0f766e] bg-white px-3 py-1 rounded-xl border border-[#b2e8e5] hover:bg-[#eefaf9] transition shadow-2xs shrink-0 ml-3"
+                >
+                  Open Table Viewer
+                </button>
+              </div>
+            )}
             {/* If no messages: Display Personalized Greeting & Digital Back Office Welcome Card */}
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center min-h-[60vh] text-center pt-6 pb-12">
@@ -716,6 +767,15 @@ export default function Home() {
                     </div>
 
                     <div className="flex-1 space-y-4 min-w-0">
+                      {/* Prominent Agent Identity Header */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[#0f172a]">AI Data Analyst</span>
+                        <span className="inline-flex items-center gap-1.5 text-[10px] px-2.5 py-0.5 rounded-full bg-[#eefaf9] text-[#0f766e] font-semibold border border-[#b2e8e5]">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#2cb8b2] animate-pulse"></span>
+                          Digital Back Office Agent
+                        </span>
+                      </div>
+
                       {/* Collapsible Reasoning Process */}
                       {payload?.reasoning_steps && payload.reasoning_steps.length > 0 && (
                         <ReasoningViewer
@@ -945,8 +1005,8 @@ export default function Home() {
                       style={{ animationDelay: "0.3s" }}
                     ></div>
                   </div>
-                  <span className="text-xs text-[#64748b]">
-                    Profiling schema, executing query in DuckDB, and synthesizing business takeaways...
+                  <span className="text-xs text-[#64748b] font-medium">
+                    Analyzing...
                   </span>
                 </div>
               </div>
@@ -956,24 +1016,31 @@ export default function Home() {
           </div>
         </div>
 
-        {/* BOTTOM FLOATING INPUT BOX WITH CHATBOX CSV UPLOAD */}
+        {/* BOTTOM FLOATING INPUT BOX WITH MULTI-CSV ATTACHMENT */}
         <div className="p-4 bg-white border-t border-[#e2e8f0] shrink-0">
-          <div className="max-w-3xl mx-auto">
-            {/* Attached CSV File Badge */}
-            {attachedFile && (
-              <div className="mb-2 flex items-center gap-2 p-2 px-3 rounded-xl bg-[#eefaf9] border border-[#b2e8e5] text-xs text-[#0f766e] animate-fadeIn w-fit">
-                <FileSpreadsheet className="w-4 h-4 text-[#2cb8b2] shrink-0" />
-                <span className="font-semibold">{attachedFile.name}</span>
-                <span className="text-[11px] text-[#0d9488]">
-                  ({(attachedFile.size / 1024).toFixed(1)} KB)
-                </span>
-                <button
-                  onClick={() => setAttachedFile(null)}
-                  className="ml-2 text-[#0f766e] hover:text-red-500 rounded p-0.5"
-                  title="Remove attachment"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
+          <div className="max-w-5xl xl:max-w-6xl mx-auto">
+            {/* Attached CSV Files Badges */}
+            {attachedFiles.length > 0 && (
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                {attachedFiles.map((file, idx) => (
+                  <div
+                    key={file.name + idx}
+                    className="flex items-center gap-2 p-1.5 px-3 rounded-xl bg-[#eefaf9] border border-[#b2e8e5] text-xs text-[#0f766e] animate-fadeIn"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-[#2cb8b2] shrink-0" />
+                    <span className="font-semibold">{file.name}</span>
+                    <span className="text-[10px] text-[#0d9488]">
+                      ({(file.size / 1024).toFixed(1)} KB)
+                    </span>
+                    <button
+                      onClick={() => setAttachedFiles((prev) => prev.filter((_, i) => i !== idx))}
+                      className="ml-1 text-[#0f766e] hover:text-red-500 rounded p-0.5"
+                      title="Remove file"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
@@ -991,11 +1058,11 @@ export default function Home() {
               <button
                 onClick={() => fileInputRef.current?.click()}
                 className={`p-2.5 rounded-full transition shrink-0 ${
-                  attachedFile
+                  attachedFiles.length > 0
                     ? "bg-[#2cb8b2] text-white"
                     : "text-[#64748b] hover:text-[#0f172a] hover:bg-[#e2e8f0]"
                 }`}
-                title="Attach CSV file to prompt"
+                title="Attach one or more CSV files"
               >
                 <Paperclip className="w-4 h-4" />
               </button>
@@ -1007,11 +1074,11 @@ export default function Home() {
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  attachedFile
-                    ? `Ask about '${attachedFile.name}' or press send to analyze...`
+                  attachedFiles.length > 0
+                    ? `Ask about ${attachedFiles.map((f) => `'${f.name}'`).join(", ")} or press send to analyze...`
                     : tables.length > 0
-                    ? `Ask anything about ${tables.map((t) => t.file_name).join(", ")}...`
-                    : "Attach a CSV or ask any data analysis question..."
+                    ? `Ask anything about ${tables.map((t) => t.table_name + '.csv').join(", ")}...`
+                    : "Attach CSV files or ask any data analysis question..."
                 }
                 rows={1}
                 disabled={loading}
@@ -1021,9 +1088,9 @@ export default function Home() {
               {/* Send Button */}
               <button
                 onClick={() => handleSend()}
-                disabled={loading || (!inputValue.trim() && !attachedFile)}
+                disabled={loading || (!inputValue.trim() && attachedFiles.length === 0)}
                 className={`p-2.5 rounded-xl transition shrink-0 ${
-                  (inputValue.trim() || attachedFile) && !loading
+                  (inputValue.trim() || attachedFiles.length > 0) && !loading
                     ? "bg-[#2cb8b2] text-white hover:bg-[#23a8a2] shadow-xs"
                     : "bg-[#e2e8f0] text-[#94a3b8] cursor-not-allowed"
                 }`}

@@ -9,6 +9,30 @@ class DuckDBEngine:
         # In-memory database instance
         self.conn = duckdb.connect(database=":memory:")
         self.registered_tables: dict[str, str] = {} # table_name -> file_path
+        self.auto_register_uploads()
+
+    def auto_register_uploads(self):
+        """Scans the upload directory and automatically registers all existing CSV files."""
+        try:
+            from app.config import settings
+            upload_dir = Path(settings.UPLOAD_DIR)
+            if upload_dir.exists():
+                for f in upload_dir.glob("*.csv"):
+                    safe_name = f.stem.replace("-", "_").replace(" ", "_")
+                    if safe_name not in self.registered_tables:
+                        try:
+                            self.register_csv(safe_name, f)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+    def ensure_table(self, table_name: str) -> bool:
+        """Ensures a table is registered, checking disk if necessary."""
+        if table_name in self.registered_tables:
+            return True
+        self.auto_register_uploads()
+        return table_name in self.registered_tables
 
     def register_csv(self, table_name: str, file_path: str | Path) -> TableSchema:
         """
@@ -28,6 +52,7 @@ class DuckDBEngine:
         """
         Profiles the schema and summary statistics for a registered table.
         """
+        self.ensure_table(table_name)
         # Get column info
         describe_df = self.conn.execute(f"DESCRIBE \"{table_name}\"").fetchdf()
         row_count = self.conn.execute(f"SELECT COUNT(*) FROM \"{table_name}\"").fetchone()[0]
@@ -121,10 +146,12 @@ class DuckDBEngine:
 
     def get_registered_tables_info(self) -> list[TableSchema]:
         """Returns schemas for all currently registered tables."""
+        self.auto_register_uploads()
         return [self.inspect_table(t) for t in self.registered_tables]
 
     def get_dataframe(self, table_name: str) -> pd.DataFrame:
         """Returns table as a Pandas DataFrame for statistical anomaly detection."""
+        self.ensure_table(table_name)
         return self.conn.execute(f"SELECT * FROM \"{table_name}\"").fetchdf()
 
 # Global singleton engine

@@ -191,7 +191,15 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
     # 4. Initialize graph state
     active_tables = request.table_names or conv.get_tables_list()
     if not active_tables:
+        db_engine.auto_register_uploads()
         active_tables = list(db_engine.registered_tables.keys())
+
+    # Ensure conversation permanently remembers these active tables for subsequent queries
+    if active_tables:
+        existing = conv.get_tables_list()
+        merged = list(dict.fromkeys(existing + active_tables))
+        conv.set_tables_list(merged)
+        db.commit()
 
     initial_state = {
         "session_id": conv.id,
