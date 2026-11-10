@@ -51,34 +51,43 @@ def supervisor_node(state: AgentState) -> dict[str, Any]:
     query = state.get("message", "").strip().lower()
     steps = state.get("reasoning_steps", [])
     
-    overview_keywords = ["overview", "explain", "understand", "profile", "describe", "summary", "summarize", "about", "what is this data", "structure"]
-    greetings = {"hi", "hello", "hey", "hola", "help", "who are you", "what can you do", "good morning", "good evening"}
+    greetings = {"hi", "hello", "hey", "hola", "help", "who are you", "what can you do", "good morning", "good evening", "good afternoon"}
     forecast_keywords = ["forecast", "predict", "projection", "predictive", "next months", "future trend"]
-    quality_keywords = ["quality", "data quality", "missing", "hygiene", "audit", "cleanliness", "duplicates", "null count"]
+    quality_keywords = ["quality", "data quality", "hygiene", "audit", "cleanliness", "duplicates", "null count"]
+    anomaly_keywords = ["anomaly", "anomalies", "outlier", "outliers", "unusual", "irregular"]
+    dataset_overview_keywords = ["overview", "profile dataset", "describe dataset", "summarize dataset", "what is this data", "explain the dataset", "explain this csv", "explain that csv", "dataset summary"]
 
-    if query in greetings or any(query.startswith(g) for g in ["hi", "hello", "hey", "hola", "help", "who are you", "what can you do", "good morning", "good evening"]):
+    if query in greetings or any(query == g or query.startswith(g + " ") for g in greetings):
         intent = "greeting"
-        steps.append("Supervisor recognized conversational greeting; providing capabilities guide.")
+        steps.append("Recognized greeting; providing helpful capabilities guide.")
+    elif any(k in query for k in anomaly_keywords):
+        intent = "anomaly"
+        steps.append("Routing query to Anomaly Detection.")
     elif any(k in query for k in forecast_keywords):
         intent = "forecast"
-        steps.append("Supervisor routed query to Time-Series Forecasting workflow.")
+        steps.append("Routing query to Forecasting.")
     elif any(k in query for k in quality_keywords):
         intent = "quality"
-        steps.append("Supervisor routed query to Data Quality & Hygiene Audit workflow.")
-    elif any(k in query for k in overview_keywords) or query.startswith("explain") or query.startswith("overview"):
+        steps.append("Routing query to Data Quality Audit.")
+    elif any(k in query for k in dataset_overview_keywords) or query.startswith("overview") or ("explain" in query and any(w in query for w in ["dataset", "csv", "table", "file", "data", "regions", "sales", "products", "customers"])):
         intent = "overview"
-        steps.append("Supervisor routed query to Dataset Profiling & Explanation workflow.")
-    elif any(k in query for k in ["anomaly", "anomalies", "outlier", "unusual", "irregular"]):
-        intent = "anomaly"
-        steps.append("Supervisor routed query to Statistical Anomaly Detection workflow.")
+        steps.append("Routing query to Dataset Overview.")
     else:
         intent = "sql_analysis"
-        steps.append("Supervisor routed query to DuckDB SQL & Pandas Code Generation workflow.")
+        steps.append("Routing query to Data Analysis & Visualization.")
 
     return {
         "intent": intent,
         "reasoning_steps": steps
     }
+
+def resolve_target_table(tables: list[str], query: str) -> str:
+    q = query.lower()
+    for t in tables:
+        stem = t.lower().rstrip('s')
+        if t.lower() in q or (len(stem) >= 4 and stem in q):
+            return t
+    return tables[0] if tables else ""
 
 # 3.4 Greeting Node (Polite, helpful introduction)
 def greeting_node(state: AgentState) -> dict[str, Any]:
@@ -88,25 +97,23 @@ def greeting_node(state: AgentState) -> dict[str, Any]:
     table_list = ", ".join(tables) if tables else "none"
 
     greeting_text = (
-        f"**Hello! I am your AI Data Analyst.**\n\n"
-        f"I can help you understand your data, uncover key business drivers, and build visualizations.\n\n"
-        f"**Active Datasets:** {len(tables)} table(s) registered ({table_list}).\n\n"
-        f"**What I can do for you:**\n"
-        f"1. **Exploratory Data Analysis:** Ask questions in plain English to generate deterministic DuckDB SQL and Pandas code.\n"
-        f"2. **Interactive Visualizations:** Generate Bar, Line, Pie, Area, and Scatter charts automatically.\n"
-        f"3. **Statistical Anomaly Detection:** Detect numeric outliers using IQR bounds and Z-scores (|Z| > 2.5) with full explanations.\n"
-        f"4. **Time-Series Forecasting:** Project future periods with regression trend modeling.\n"
-        f"5. **Data Quality Checks:** Audit missing values, completeness scores, and duplicates.\n\n"
-        f"Upload a CSV file or ask a question to begin!"
+        f"**Hello! I am your AI Data Analyst at Digital Back Office.**\n\n"
+        f"How can I help you today? Here is what you can do:\n\n"
+        f"1. **Upload CSV Files:** Drag and drop one or more CSVs to automatically inspect schemas and data quality.\n"
+        f"2. **Ask Questions in Plain English:** (e.g. *Which region had the lowest revenue?*, *Show monthly sales trends*, *Top 5 customers*).\n"
+        f"3. **Interactive Charts:** Get Bar, Line, Pie, Area, and Scatter charts generated instantly with SQL & Python code.\n"
+        f"4. **Outlier & Anomaly Detection:** Detect numeric anomalies with statistical IQR & Z-score explanations.\n"
+        f"5. **Data Quality Audits:** Check missing values, completeness scores, and duplicates.\n\n"
+        f"{f'**Currently Active Datasets:** {table_list}' if tables else 'Upload your first CSV file or ask a question to get started!'}"
     )
-    steps.append("Prepared greeting with capabilities guide.")
+    steps.append("Prepared greeting guide.")
     elapsed_ms = round((time.time() - start_time) * 1000, 2)
 
     return {
         "natural_language_answer": greeting_text,
         "insights": [
-            f"{len(tables)} dataset(s) loaded in in-memory DuckDB.",
-            "Ask questions or upload CSVs to generate SQL, interactive visualizations, and anomaly reports."
+            f"Active in-memory tables: {table_list if tables else 'None'}.",
+            "Ready for questions, SQL analysis, charts, and anomaly audits."
         ],
         "chart": None,
         "data_results": [],
@@ -119,11 +126,32 @@ def overview_node(state: AgentState) -> dict[str, Any]:
     start_time = state.get("start_time", time.time())
     steps = state.get("reasoning_steps", [])
     tables = state.get("selected_tables", [])
-    target_table = tables[0] if tables else ""
+    query = state.get("message", "")
+    q = query.lower()
 
-    steps.append(f"Analyzing schema, column distributions, and null ratios for '{target_table}'...")
-    profile_data = DataProfilerAgent.explain_dataset_overview(target_table)
-    steps.append("Generated executive summary, health scores, and dynamic analytical suggestions.")
+    # Check which tables are mentioned in the query
+    matched_tables = [
+        t for t in tables
+        if t.lower() in q or (len(t.rstrip('s')) >= 4 and t.rstrip('s').lower() in q)
+    ]
+    
+    # Trigger multi-dataset overview if multiple tables match, or query asks for all/files/datasets/them
+    is_multi = (
+        len(matched_tables) > 1
+        or any(k in q for k in ["all", "files", "datasets", "tables", "them"])
+        or len(matched_tables) == 0
+    )
+
+    if len(tables) > 1 and is_multi:
+        steps.append(f"Analyzing all {len(tables)} uploaded datasets in working memory...")
+        profile_data = DataProfilerAgent.explain_multi_dataset_overview(tables)
+        target_table = profile_data.get("table_name", tables[0])
+        steps.append(f"Generated multi-dataset overview across {len(tables)} tables.")
+    else:
+        target_table = matched_tables[0] if matched_tables else (tables[0] if tables else "")
+        steps.append(f"Analyzing schema, column distributions, and null ratios for '{target_table}'...")
+        profile_data = DataProfilerAgent.explain_dataset_overview(target_table)
+        steps.append(f"Generated dataset summary and analytical preview for '{target_table}'.")
 
     elapsed_ms = round((time.time() - start_time) * 1000, 2)
     return {
@@ -144,7 +172,8 @@ def forecast_node(state: AgentState) -> dict[str, Any]:
     start_time = state.get("start_time", time.time())
     steps = state.get("reasoning_steps", [])
     tables = state.get("selected_tables", [])
-    target_table = tables[0] if tables else ""
+    query = state.get("message", "")
+    target_table = resolve_target_table(tables, query)
 
     steps.append(f"Fitting linear trend model on temporal series for table '{target_table}'...")
     results, chart, explanation, insights = ForecastingAgent.forecast_series(target_table, periods_ahead=4)
@@ -168,7 +197,8 @@ def quality_node(state: AgentState) -> dict[str, Any]:
     start_time = state.get("start_time", time.time())
     steps = state.get("reasoning_steps", [])
     tables = state.get("selected_tables", [])
-    target_table = tables[0] if tables else ""
+    query = state.get("message", "")
+    target_table = resolve_target_table(tables, query)
 
     steps.append(f"Running data quality and hygiene checks on '{target_table}'...")
     report, explanation, insights = DataQualityAgent.audit_table(target_table)
@@ -194,6 +224,7 @@ def sql_node(state: AgentState) -> dict[str, Any]:
     tables = state.get("selected_tables", [])
     api_key = state.get("api_key")
     model = state.get("model")
+    conv_hist = state.get("conversation_history", [])
     steps = state.get("reasoning_steps", [])
 
     sql, python_code, rows, total_count, error, agent_steps = SQLAgent.generate_and_execute_sql(
@@ -201,7 +232,8 @@ def sql_node(state: AgentState) -> dict[str, Any]:
         schema_context=schema_ctx,
         table_names=tables,
         api_key=api_key,
-        model=model
+        model=model,
+        conversation_history=conv_hist
     )
     steps.extend(agent_steps)
 
@@ -217,7 +249,8 @@ def sql_node(state: AgentState) -> dict[str, Any]:
 # 5. Anomaly Detection Node
 def anomaly_node(state: AgentState) -> dict[str, Any]:
     tables = state.get("selected_tables", [])
-    target_table = tables[0] if tables else None
+    query = state.get("message", "")
+    target_table = resolve_target_table(tables, query)
     steps = state.get("reasoning_steps", [])
     anomalies = []
 
@@ -261,14 +294,15 @@ def insight_synthesizer_node(state: AgentState) -> dict[str, Any]:
     model = state.get("model")
     steps = state.get("reasoning_steps", [])
 
-    steps.append("Synthesizing final executive explanation and strategic takeaways.")
+    steps.append("Synthesizing clear data analysis and key metrics.")
     answer, insights = InsightAgent.generate_insights_and_explanation(
         user_query=query,
         sql_query=sql,
         data_results=data,
         anomalies=anomalies,
         api_key=api_key,
-        model=model
+        model=model,
+        conversation_history=state.get("conversation_history", [])
     )
 
     elapsed_ms = round((time.time() - start_time) * 1000, 2)

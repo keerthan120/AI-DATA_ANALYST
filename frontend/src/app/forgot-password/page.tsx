@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { forgotPassword, resetPassword } from "@/lib/api";
 import { BrandLogo } from "@/components/BrandLogo";
-import { Mail, Lock, Key, AlertCircle, CheckCircle2, ArrowLeft } from "lucide-react";
+import { Mail, Lock, KeyRound, AlertCircle, CheckCircle2, ArrowLeft, ArrowRight, ShieldCheck } from "lucide-react";
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
@@ -13,10 +13,17 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [resetToken, setResetToken] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [issuedToken, setIssuedToken] = useState<string | null>(null);
+
+  // Live password validation
+  const hasMinLength = newPassword.length >= 8;
+  const hasUpperLower = /[A-Z]/.test(newPassword) && /[a-z]/.test(newPassword);
+  const hasNumber = /[0-9]/.test(newPassword);
+  const hasSpecial = /[!@#$%^&*(),.?":{}|<>\-_]/.test(newPassword);
+  const isPasswordStrong = hasMinLength && hasUpperLower && hasNumber && hasSpecial;
 
   const handleRequestReset = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,14 +32,13 @@ export default function ForgotPasswordPage() {
     setLoading(true);
     try {
       const res = await forgotPassword(email);
-      setSuccess("Reset code has been generated.");
+      setSuccess(res.message || "A 6-digit verification code has been dispatched to your email address.");
       if (res.reset_token) {
-        setIssuedToken(res.reset_token);
         setResetToken(res.reset_token);
       }
       setStep("reset");
     } catch (err: any) {
-      setError(err.message || "Failed to generate reset code.");
+      setError(err.message || "Failed to generate verification code.");
     } finally {
       setLoading(false);
     }
@@ -42,14 +48,21 @@ export default function ForgotPasswordPage() {
     e.preventDefault();
     setError(null);
     setSuccess(null);
-    if (newPassword.length < 6) {
-      setError("Password must be at least 6 characters.");
+
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match.");
       return;
     }
+
+    if (!isPasswordStrong) {
+      setError("Please fulfill all strong password requirements.");
+      return;
+    }
+
     setLoading(true);
     try {
       await resetPassword({ email, resetToken, newPassword });
-      setSuccess("Password updated successfully. Redirecting to login...");
+      setSuccess("Password updated successfully with strong security verification! Redirecting to login...");
       setTimeout(() => router.push("/login"), 2000);
     } catch (err: any) {
       setError(err.message || "Failed to reset password.");
@@ -71,8 +84,8 @@ export default function ForgotPasswordPage() {
             </h1>
             <p className="text-sm text-slate-500 mt-1">
               {step === "request"
-                ? "Enter your email to receive a password reset token"
-                : "Enter your reset code and set a new password"}
+                ? "Enter your email to receive a 6-digit verification code"
+                : "Enter the verification code and set a new strong password"}
             </p>
           </div>
 
@@ -112,73 +125,95 @@ export default function ForgotPasswordPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 py-3 bg-[#2cb8b2] hover:bg-[#23a8a2] text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full bg-[#2cb8b2] hover:bg-[#23a8a2] text-white font-medium py-2.5 px-4 rounded-xl shadow-xs transition flex items-center justify-center gap-2 group disabled:opacity-60"
               >
-                {loading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Sending code...</span>
-                  </>
-                ) : (
-                  <span>Send Reset Code</span>
-                )}
+                <span>{loading ? "Sending code..." : "Send Verification Code"}</span>
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
               </button>
             </form>
           ) : (
             <form onSubmit={handleResetPassword} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Reset code
+                  6-Digit Verification Code
                 </label>
                 <div className="relative">
-                  <Key className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                  <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
                   <input
                     type="text"
                     required
                     value={resetToken}
                     onChange={(e) => setResetToken(e.target.value)}
-                    placeholder="Enter reset token"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-2 focus:ring-[#2cb8b2]/20 transition font-mono"
+                    placeholder="123456"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-center font-mono font-bold tracking-widest text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-2 focus:ring-[#2cb8b2]/20 transition"
                   />
                 </div>
-                {issuedToken && (
-                  <p className="text-xs text-slate-500 mt-1">
-                    Demo dev token auto-filled: <span className="font-mono text-[#2cb8b2]">{issuedToken}</span>
-                  </p>
-                )}
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                  New password
+                  New Strong Password
                 </label>
                 <div className="relative">
                   <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
                   <input
                     type="password"
                     required
-                    minLength={6}
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="At least 6 characters"
+                    placeholder="Enter new strong password"
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-2 focus:ring-[#2cb8b2]/20 transition"
                   />
                 </div>
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Confirm New Password
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-3.5" />
+                  <input
+                    type="password"
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Confirm new password"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#2cb8b2] focus:ring-2 focus:ring-[#2cb8b2]/20 transition"
+                  />
+                </div>
+
+                {newPassword && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-1 flex items-center gap-1">
+                      <ShieldCheck className="w-3.5 h-3.5 text-[#2cb8b2]" />
+                      <span>Strong Password Requirements:</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 text-[11px]">
+                      <span className={`flex items-center gap-1 ${hasMinLength ? "text-emerald-600 font-medium" : "text-slate-400"}`}>
+                        {hasMinLength ? "✓" : "○"} 8+ characters
+                      </span>
+                      <span className={`flex items-center gap-1 ${hasUpperLower ? "text-emerald-600 font-medium" : "text-slate-400"}`}>
+                        {hasUpperLower ? "✓" : "○"} Upper & lowercase
+                      </span>
+                      <span className={`flex items-center gap-1 ${hasNumber ? "text-emerald-600 font-medium" : "text-slate-400"}`}>
+                        {hasNumber ? "✓" : "○"} At least 1 number
+                      </span>
+                      <span className={`flex items-center gap-1 ${hasSpecial ? "text-emerald-600 font-medium" : "text-slate-400"}`}>
+                        {hasSpecial ? "✓" : "○"} Special character
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full mt-2 py-3 bg-[#2cb8b2] hover:bg-[#23a8a2] text-white text-sm font-semibold rounded-xl shadow-sm hover:shadow transition disabled:opacity-50 flex items-center justify-center gap-2"
+                className="w-full bg-[#2cb8b2] hover:bg-[#23a8a2] text-white font-medium py-2.5 px-4 rounded-xl shadow-xs transition flex items-center justify-center gap-2 group disabled:opacity-60"
               >
-                {loading ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>Resetting password...</span>
-                  </>
-                ) : (
-                  <span>Update Password</span>
-                )}
+                <span>{loading ? "Updating..." : "Update Password"}</span>
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
               </button>
             </form>
           )}
@@ -186,17 +221,13 @@ export default function ForgotPasswordPage() {
           <div className="mt-8 pt-6 border-t border-slate-100 text-center">
             <Link
               href="/login"
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 hover:text-[#2cb8b2] transition"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-800 transition"
             >
               <ArrowLeft className="w-4 h-4" />
               <span>Back to sign in</span>
             </Link>
           </div>
         </div>
-
-        <p className="text-center text-xs text-slate-400 mt-6">
-          © {new Date().getFullYear()} Digital Back Office Ltd. All rights reserved.
-        </p>
       </div>
     </div>
   );

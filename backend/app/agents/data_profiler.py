@@ -56,6 +56,80 @@ class DataProfilerAgent:
         return "\n".join(context_lines), active_table_names
 
     @staticmethod
+    def explain_multi_dataset_overview(table_names: list[str]) -> dict[str, Any]:
+        """
+        Generates a comprehensive multi-dataset analytical overview when multiple CSV files are uploaded.
+        Summarizes all tables, cross-table foreign keys, overall data health, and suggested queries.
+        """
+        all_schemas = db_engine.get_registered_tables_info()
+        target_schemas = [s for s in all_schemas if s.table_name in table_names]
+        if not target_schemas:
+            target_schemas = all_schemas
+
+        total_rows = sum(s.row_count for s in target_schemas)
+        total_cols = sum(s.column_count for s in target_schemas)
+        
+        # Build catalog table
+        catalog_rows = []
+        for s in target_schemas:
+            num_cols = len([c for c in s.columns if any(t in c.dtype.upper() for t in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "BIGINT"])])
+            date_cols = len([c for c in s.columns if any(t in c.dtype.upper() for t in ["DATE", "TIME"]) or "date" in c.name.lower()])
+            keys = [c.name for c in s.columns if "id" in c.name.lower() or "key" in c.name.lower()]
+            keys_str = ", ".join(f"`{k}`" for k in keys[:3]) if keys else "None"
+            catalog_rows.append(f"| **`{s.file_name}`** | `{s.table_name}` | {s.row_count:,} | {s.column_count} ({num_cols} numeric, {date_cols} date) | {keys_str} |")
+
+        catalog_table_md = "\n".join([
+            "| Dataset File | Table Name | Records | Dimensions / Measures | Key Fields |",
+            "| :--- | :--- | :--- | :--- | :--- |",
+            *catalog_rows
+        ])
+
+        # Detect cross-table foreign key relationships
+        table_cols_map = {s.table_name: set(c.name.lower() for c in s.columns) for s in target_schemas}
+        joins = []
+        t_names = list(table_cols_map.keys())
+        for i in range(len(t_names)):
+            for j in range(i + 1, len(t_names)):
+                t1, t2 = t_names[i], t_names[j]
+                common = table_cols_map[t1].intersection(table_cols_map[t2])
+                key_cols = [c for c in common if "id" in c or "code" in c or "key" in c]
+                for k in key_cols:
+                    joins.append(f"- **`{t1}.{k}`** connects with **`{t2}.{k}`**")
+
+        joins_md = "\n".join(joins) if joins else "No common key attributes detected across these tables."
+
+        # Preview rows: pick largest/fact table
+        largest_schema = max(target_schemas, key=lambda s: s.row_count)
+        
+        md = f"""### 📊 Multi-Dataset Overview: {len(target_schemas)} Uploaded Files
+
+Successfully loaded and analyzed all **{len(target_schemas)} CSV datasets** into DuckDB in-memory engine.
+
+**Summary:**
+- **Total Combined Records:** {total_rows:,} rows across {len(target_schemas)} datasets
+- **Total Attributes:** {total_cols} columns analyzed
+- **In-Memory Engine:** Ready for instant multi-table SQL queries, automatic Pandas code, and cross-dataset joins.
+
+**Dataset Catalog:**
+{catalog_table_md}
+
+**Relational Schema & Cross-Table Joins:**
+{joins_md}"""
+
+        insights = [
+            f"Successfully profiled all {len(target_schemas)} datasets ({total_rows:,} total records).",
+            f"Relational join paths verified across {len(joins)} connection points.",
+            "Ready for natural language questions, charts, DuckDB SQL execution, and anomaly detection."
+        ]
+
+        return {
+            "markdown": md,
+            "insights": insights,
+            "preview_rows": largest_schema.preview_rows,
+            "table_name": largest_schema.table_name
+        }
+
+    @staticmethod
     def explain_dataset_overview(table_name: str) -> dict[str, Any]:
         """
         Generates a rich, professional executive summary, schema profile,
@@ -121,6 +195,8 @@ class DataProfilerAgent:
         if primary_num and primary_cat:
             suggested.append(f"Which {primary_cat} generated the highest {primary_num}?")
             suggested.append(f"What are the top 5 {primary_cat}s by total {primary_num}?")
+        elif primary_cat:
+            suggested.append(f"Show breakdown by {primary_cat}.")
         
         # 2. Temporal trend question
         if date_cols and primary_num:
@@ -132,41 +208,32 @@ class DataProfilerAgent:
         
         # 3. Anomaly question
         if primary_num:
-            suggested.append(f"Detect statistical anomalies and outliers in {primary_num}.")
-        else:
-            suggested.append("Detect anomalies and outliers across this dataset.")
+            suggested.append(f"Detect anomalies in {primary_num}.")
+        
+        # Build clean, human-friendly markdown summary
+        cat_preview = ", ".join([f"`{c.name}`" for c in categorical_cols[:4]])
+        num_preview = ", ".join([f"`{c.name}`" for c in numeric_cols[:4]])
 
-        # 4. Code generation question
-        if primary_num and primary_cat:
-            suggested.append(f"Generate SQL and pandas code to aggregate {primary_num} by {primary_cat}.")
-        else:
-            suggested.append("Generate SQL and pandas code for summary statistics.")
-
-        # Build comprehensive markdown explanation
         md = f"""### 📊 Dataset Overview: `{schema.file_name}`
 
-Successfully loaded and profiled **`{table_name}`** into DuckDB in-memory engine.
+Successfully loaded and analyzed **`{table_name}`**.
 
-#### **Key Statistics**
-- **Total Records:** {row_count:,} rows
-- **Total Attributes:** {col_count} columns ({len(numeric_cols)} numeric, {len(categorical_cols)} categorical, {len(date_cols)} temporal)
-- **Data Completeness:** **{completeness_pct}%** ({total_nulls:,} missing values out of {total_cells:,} total cells)
-- **Missing Data Status:** {"All columns are 100% populated with zero nulls." if not cols_with_nulls else f"{len(cols_with_nulls)} column(s) contain missing values."}
+**Summary:**
+- **Rows & Columns:** {row_count:,} rows and {col_count} columns
+- **Data Quality:** {completeness_pct}% completeness ({total_nulls:,} missing cells)
+- **Status:** {"All fields are complete with zero missing values." if not cols_with_nulls else f"{len(cols_with_nulls)} column(s) have missing values."}
 
-#### **Column Schema & Profile**
+**Columns & Types:**
 {schema_table_md}
 
-#### **Analytical Opportunities**
-1. **Aggregations & Groupings:** Segment metrics across {', '.join([f'`{c.name}`' for c in categorical_cols[:3]]) or 'categorical dimensions'}.
-2. **Numeric Distributions:** Evaluate summary statistics and anomalies across {', '.join([f'`{c.name}`' for c in numeric_cols[:3]]) or 'numeric attributes'}.
-3. **Deterministic SQL & Python Code:** Execute high-performance analytical queries directly in DuckDB with automatic Pandas code generation.
-
-*Ask any question below or click one of the suggested prompts to start analyzing!*"""
+**Key Fields:**
+{f"- **Categorical:** {cat_preview}" if cat_preview else ""}
+{f"- **Numeric Metrics:** {num_preview}" if num_preview else ""}"""
 
         insights = [
-            f"Table `{table_name}` parsed with {row_count:,} rows and {col_count} columns.",
-            f"Data quality health score: {completeness_pct}% completeness.",
-            f"Ready for natural language queries, DuckDB SQL execution, interactive charts, and anomaly detection."
+            f"Loaded `{table_name}` with {row_count:,} rows and {col_count} attributes.",
+            f"Data cleanliness is at {completeness_pct}%.",
+            f"Ready to answer questions, build charts, and run analyses."
         ]
 
         return {

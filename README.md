@@ -1,324 +1,143 @@
-# Data Analyst: Multi-Agent Analytics Engine
+# AI Data Analyst · Digital Back Office
 
-A production-grade, multi-agent data analysis application that allows users to upload CSV files and interact with their data using natural language. The system synthesizes safe DuckDB SQL queries, generates interactive Recharts visualizations, detects statistical anomalies (IQR, Z-Score, Isolation Forest), explains step-by-step reasoning, and enforces strict security guardrails.
-
----
-
-## Application Overview
-
-The system provides an enterprise-focused analytics workspace:
-* **Multi-CSV Ingestion & Schema Profiling:** Upload single or multiple CSVs with automatic schema discovery, null checks, unique value counts, and automatic foreign key detection for cross-table joins.
-* **Deterministic Computation (Zero Hallucinations):** Eliminates mathematical hallucinations by delegating calculations to DuckDB rather than relying on generative model arithmetic.
-* **LangGraph Multi-Agent Orchestration:** Specialized agents execute in an orchestrated state graph: Supervisor Router, Data Profiler, SQL Analyst, Visualization Specialist, Outlier Detector, and Insight Synthesizer.
-* **Statistical Anomaly Detection:** Applies Interquartile Range (IQR), Z-Score, and Isolation Forest algorithms to flag numerical outliers with plain-language explanations.
-* **Interactive Visualizations:** Dynamically renders Bar, Line, Area, and Pie charts using Recharts with instant chart-type switching.
-* **Security & Guardrails:** AST-based Python sandbox and regex SQL parser preventing destructive statements (`DROP`, `DELETE`, `UPDATE`, `ALTER`, `TRUNCATE`) and prompt injections.
-* **PostgreSQL Authentication:** Persistent user accounts, salted bcrypt password hashing, and token-based password reset stored in local or hosted PostgreSQL.
-* **OpenRouter LLM Integration:** Managed centrally via environment variables (`.env`) supporting free and enterprise models with automated semantic fallbacks.
-* **Compliance & Legal Readiness:** Dedicated Privacy Policy (`/privacy`), Terms of Service (`/terms`), SVG favicon, and zero telemetry on uploaded CSV data rows.
+A production-ready, AI-powered Data Analyst application that allows users to upload one or more CSV files and interact with their data using natural language. Built with **FastAPI**, **DuckDB**, **LangGraph Multi-Agent Orchestration**, **PostgreSQL**, and **Next.js 14** featuring the clean, light-mode **Digital Back Office** design system.
 
 ---
 
-## Visual Preview & Demo Walkthrough
+## 🌟 Key Features & Capabilities
 
-### Application Interface & Analytical Console
-![Dashboard Preview](docs/screenshots/dashboard_preview.jpg)
+### Core Features
+- 📁 **Upload & Validate One or More CSV Files:** Drag and drop or attach multiple CSV files in a single chat. Instant schema profiling, row count, null ratio, and column type detection.
+- 💬 **Natural Language Questions & Answers:** Ask questions in plain English (*"Which region has the lowest revenue?"*, *"Top 5 customers by sales"*, *"Show monthly trends"*).
+- 📊 **Interactive Charts:** Automatically generates responsive **Bar, Line, Pie, Area, and Scatter** charts using Recharts with instant chart switching.
+- ⚡ **Deterministic DuckDB SQL & Pandas Code:** Generates safe, verified SQL queries executed directly in DuckDB's in-memory engine alongside equivalent Python Pandas code.
+- 🔍 **Statistical Anomaly Detection:** Identifies numeric outliers using Interquartile Range (IQR) bounds and Z-scores ($|Z| > 2.5$) with plain-English root-cause explanations.
+- 💡 **Executive Business Insights & Summaries:** Synthesizes factual findings, percentage shares, comparisons, and strategic takeaways without robotic boilerplate.
+- 🧠 **Multi-Turn Conversational Memory:** Maintains context throughout the session. Seamlessly handles follow-ups like *"can you generfate the piechart,sql"* and *"which region had the lowest revenue?"* without losing context.
 
-### 10–30 Second Video Demonstration
-* **Direct Video File:** [`docs/demo.mp4`](docs/demo.mp4) (Local demo recording showcasing CSV upload, natural language query execution, interactive chart rendering, and statistical anomaly detection)
-* **Live Application Preview:** `http://localhost:3000` (via Docker Compose or local development server)
+### Advanced & Bonus Capabilities
+- 🔗 **Multi-File Relational Analysis:** Automatically detects foreign keys and performs cross-table SQL joins across multiple CSVs (e.g., joining `regions.csv` with `sales.csv` on `region_id`).
+- 📈 **Time-Series Forecasting:** Projects future periods with statistical regression trend modeling.
+- 🧼 **Data Quality & Hygiene Checks:** Comprehensive audits of missing data, null distributions, duplicate rows, and completeness health grades.
+- 🤖 **Agentic Workflows & Tool Calling:** LangGraph state graph orchestrates 7 specialized agents: *Supervisor Router, Data Profiler, SQL Analyst, Visualization Specialist, Outlier Auditor, Forecasting Agent, and Insight Synthesizer*.
+- 💾 **PostgreSQL Database Persistence:** All conversations, message histories, charts, and user profiles are saved permanently in PostgreSQL.
+- 🔐 **Authentication & 2-Step Verification (2FA):** User signup, secure bcrypt password hashing, strong password policy enforcement (8+ chars, upper/lower, number, special char), 6-digit 2FA verification codes, and email verification password reset.
+- ⚡ **Session-Scoped Caching:** High-speed LRU query cache for instant (<1ms) replay of previously computed analytical results.
+- 📥 **Export Reports & Data:** Download full analytical reports as formatted Markdown files and export filtered result tables to CSV.
+- ⏱️ **Observability & Latency Logging:** Every query provides an execution step drawer with sub-agent reasoning steps, SQL queries, and millisecond latency timers.
+- 🧪 **Automated Evaluation Framework:** Comprehensive test suites verifying guardrails, SQL generation accuracy, and multi-turn conversational memory.
 
 ---
 
-## System Architecture
+## 🚀 Quick Start Guide
+
+### 1. Prerequisites
+- **Python 3.11+**
+- **Node.js 18+** & **npm**
+- **PostgreSQL 14+** (running locally on port 5432 or via Docker)
+
+### 2. Backend Setup
+```bash
+# Navigate to backend directory
+cd backend
+
+# Create virtual environment & activate
+python -m venv venv
+# On Windows:
+.\venv\Scripts\activate
+# On Linux/macOS:
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Start FastAPI backend (port 8000)
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Backend will be available at: `http://127.0.0.1:8000` (API Docs at `http://127.0.0.1:8000/docs`)
+
+### 3. Frontend Setup
+```bash
+# In a new terminal, navigate to frontend
+cd frontend
+
+# Install dependencies
+npm install
+
+# Build & start production server (or npm run dev for development)
+npm run build
+npm run start
+```
+
+Frontend application will be live at: `http://localhost:3000`
+
+---
+
+## 💡 Example Questions & Prompts to Try
+
+Upload your CSVs or use the included sample datasets (`sample_data/`) and try:
+
+| Analysis Category | Example Natural Language Query | Generated Output |
+| :--- | :--- | :--- |
+| **Dataset Overview** | *"Explain and provide an analytical overview of the uploaded dataset 'sales'"* | Table schema, row count, null count, and data summary |
+| **Relational Join & Chart** | *"can you generfate the piechart,sql"* | Cross-table DuckDB join, Pie chart, and total net revenue breakdown |
+| **Bottom / Underperforming** | *"which region has the lowest revenue?"* | Region ranking ordered ASC with gap against runner-up |
+| **Top Ranking** | *"what are the top 5 customers by revenue?"* | Top 5 customers ordered DESC with percentage share |
+| **Temporal Seasonality** | *"Show monthly sales trends"* | Time-series period aggregation and Line chart |
+| **Anomaly Detection** | *"Detect statistical anomalies and outliers in sales"* | IQR & Z-score outlier list with row-level explanations |
+| **Data Quality Audit** | *"Run a data quality check on products"* | Completeness score, duplicate count, and hygiene grade |
+| **Code Generation** | *"Generate SQL and pandas code for this analysis"* | Copyable DuckDB SQL SELECT query and Pandas script |
+
+---
+
+## 🏗️ System Architecture
 
 ```mermaid
 flowchart TD
-    Client["User / Web Browser"] <-->|"HTTP / Port 80"| LB["Nginx Load Balancer (least_conn)"]
+    Client["User / Web Browser"] <--> NextApp["Next.js 14 Frontend\n(Digital Back Office Design)"]
     
-    subgraph FrontendCluster ["Frontend Application Tier"]
-        LB -->|"Web Traffic"| NextApp["Next.js 14 Frontend (ChatGPT UI & UX)"]
-    end
-
-    subgraph BackendCluster ["Backend Analytical Cluster (Load Balanced)"]
-        LB -->|"/api/ Round-Robin"| BE1["FastAPI Replica 1"]
-        LB -->|"/api/ Round-Robin"| BE2["FastAPI Replica 2"]
-    end
-
-    subgraph AuthLayer ["Authentication Layer (PostgreSQL)"]
-        PG[("PostgreSQL 16 Engine")]
-        BE1 <--> PG
-        BE2 <--> PG
-    end
-
-    subgraph LangGraphEngine ["LangGraph Multi-Agent Engine (Per Node)"]
-        Supervisor["Supervisor / Router Agent"]
-        Profiler["Data Profiler & Schema RAG"]
-        SQLAgent["SQL & Analytics Agent"]
+    NextApp <-->|"REST API"| FastAPIServer["FastAPI Backend Server\n(Port 8000)"]
+    
+    FastAPIServer <--> PG[("PostgreSQL\n(Users, 2FA, Chats, History)")]
+    
+    subgraph MultiAgentEngine ["LangGraph Multi-Agent Engine"]
+        Supervisor["Supervisor & Intent Router"]
+        Profiler["Data Profiler Agent"]
+        SQLGen["DuckDB SQL & Pandas Agent"]
         DuckDB[("DuckDB In-Memory Engine")]
-        VizAgent["Visualization Agent"]
-        AnomalyAgent["Statistical Outlier Agent"]
-        Synthesizer["Insight & Explanation Agent"]
+        VizAgent["Visualization Specialist\n(Bar, Line, Pie, Scatter)"]
+        AnomalyAgent["Statistical Anomaly Detector\n(IQR & Z-Score)"]
+        Synthesizer["Insight Synthesizer\n(Human-friendly Takeaways)"]
     end
-
-    BE1 --> Supervisor
-    BE2 --> Supervisor
-    Supervisor --> Profiler --> SQLAgent <--> DuckDB
-    SQLAgent --> VizAgent
-    SQLAgent --> AnomalyAgent
+    
+    FastAPIServer --> Supervisor
+    Supervisor --> Profiler
+    Supervisor --> SQLGen <--> DuckDB
+    SQLGen --> VizAgent
+    SQLGen --> AnomalyAgent
     VizAgent --> Synthesizer
     AnomalyAgent --> Synthesizer
 ```
 
 ---
 
-## Directory Structure
-
-```
-DATA/
-├── sample_data/
-│   ├── sales_transactions.csv        # 278 rows across 5 regions with seasonal dates and outliers
-│   ├── customers.csv                 # 12 customer accounts with segments and jurisdictions
-│   ├── products.csv                  # 10 catalog items with stock quantities and categories
-│   └── README.md                     # Dataset documentation & test queries
-├── backend/
-│   ├── app/
-│   │   ├── agents/
-│   │   │   ├── state.py              # LangGraph AgentState TypedDict
-│   │   │   ├── graph.py              # Multi-agent compiled StateGraph
-│   │   │   ├── data_profiler.py      # Schema profiler & join key detector
-│   │   │   ├── sql_agent.py          # SQL generator & safe executor
-│   │   │   ├── viz_agent.py          # Visualization spec generator
-│   │   │   ├── anomaly_agent.py      # IQR, Z-Score & Isolation Forest
-│   │   │   └── insight_agent.py      # Executive synthesizer
-│   │   ├── db/
-│   │   │   ├── session.py            # SQLAlchemy PostgreSQL connection
-│   │   │   └── models.py             # User and Auth database models
-│   │   ├── engine/
-│   │   │   ├── duckdb_engine.py      # In-memory DuckDB query runner
-│   │   │   └── sandbox.py            # AST Python safe execution sandbox
-│   │   ├── guardrails/
-│   │   │   └── input_guard.py        # SQL injection & prompt guardrail
-│   │   ├── models/
-│   │   │   └── schemas.py            # Pydantic schemas for API & Agents
-│   │   ├── routers/
-│   │   │   ├── auth.py               # User registration, login, password reset
-│   │   │   ├── upload.py             # CSV upload & table profiling
-│   │   │   └── chat.py               # Natural language analysis endpoint
-│   │   ├── config.py                 # Application settings & OpenRouter configuration
-│   │   └── main.py                   # FastAPI application entrypoint
-│   ├── tests/
-│   │   ├── test_auth.py              # PostgreSQL authentication tests
-│   │   ├── test_engine.py            # DuckDB engine tests
-│   │   ├── test_guardrails.py        # Security guardrails tests
-│   │   ├── test_anomaly.py           # Anomaly detection tests
-│   │   └── test_agent_workflow.py    # End-to-end multi-agent integration tests
-│   ├── requirements.txt              # Python dependencies
-│   ├── run_tests.py                  # Pytest test runner
-│   └── Dockerfile                    # Backend containerization
-├── frontend/
-│   ├── src/
-│   │   ├── app/
-│   │   │   ├── layout.tsx            # Next.js root layout with SVG favicon
-│   │   │   ├── page.tsx              # Main analytics console
-│   │   │   ├── privacy/page.tsx      # Privacy Policy document
-│   │   │   ├── terms/page.tsx        # Terms of Service document
-│   │   │   ├── icon.svg              # Minimalist database favicon
-│   │   │   └── globals.css           # Tailwind CSS styles
-│   │   ├── components/
-│   │   │   ├── Header.tsx            # Navigation header with Auth profile controls
-│   │   │   ├── AuthModal.tsx         # Sign in, registration, password reset modal
-│   │   │   ├── FileUpload.tsx        # Multi-CSV ingestion zone
-│   │   │   ├── DataPreview.tsx       # Schema inspector & data table preview
-│   │   │   ├── ChatInterface.tsx     # Natural language analytics interface
-│   │   │   ├── ChartViewer.tsx       # Recharts data visualizer (neutral palette)
-│   │   │   ├── AnomalyViewer.tsx     # Statistical outlier cards & explanations
-│   │   │   └── ReasoningViewer.tsx   # Step-by-step execution graph accordion
-│   │   ├── lib/
-│   │   │   └── api.ts                # Typed HTTP client for backend endpoints
-│   │   └── types/
-│   │       └── index.ts              # TypeScript interfaces
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── Dockerfile                    # Frontend containerization
-├── docker-compose.yml                # Multi-service container orchestration
-├── pytest.ini                        # Pytest configuration
-├── .env                              # Environment variables (OpenRouter & Database)
-└── README.md                         # Documentation
-```
+## 🛡️ Security & Guardrails
+- **Read-Only SQL Enforcement:** AST parsing and regex filters block all destructive queries (`DROP`, `DELETE`, `UPDATE`, `ALTER`, `INSERT`, `TRUNCATE`).
+- **Prompt Injection Defense:** Input guardrail detects and neutralizes prompt tampering and system jailbreak attempts.
+- **Strong Password & 2FA:** Salted bcrypt hashing, strong password complexity checks, and 6-digit OTP verification codes.
+- **Dataset Viewer:** Interactive table modal allows users to review, filter, and inspect rows without data leaking into chat context.
 
 ---
 
-## Installation & Setup
-
-### Prerequisites
-* Python 3.11 or higher
-* Node.js 18 or higher with npm
-* PostgreSQL 14 or higher (or Docker)
-
-### 1. Database Configuration
-Ensure PostgreSQL is running locally on port 5432:
-```sql
-CREATE DATABASE data_analyst;
-```
-Default connection string configured in `.env`:
-```env
-DATABASE_URL=postgresql://postgres:4321@localhost:5432/data_analyst
-```
-If PostgreSQL is unreachable, the system automatically falls back to an embedded SQLite database (`sqlite:///./data_analyst_auth.db`) so the application never halts.
-
-### 2. OpenRouter API Key Configuration
-Configure your OpenRouter API key inside `.env` in the root directory:
-```env
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-OPENROUTER_MODEL=google/gemini-2.0-flash-exp:free
-OPENROUTER_FALLBACK_MODEL=meta-llama/llama-3.3-70b-instruct:free
-```
-The API key is handled strictly server-side and never exposed to the client browser.
-
-### 3. Backend Startup
-```bash
-# Activate virtual environment
-.\venv\Scripts\Activate.ps1
-
-# Run FastAPI backend
-python start_backend.py
-```
-The backend starts at `http://127.0.0.1:8000`. Interactive OpenAPI documentation is available at `http://127.0.0.1:8000/docs`.
-
-### 4. Frontend Startup
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Open your browser at `http://localhost:3000`.
+## 🎨 UI & UX Design
+Built strictly to match the **[Digital Back Office](https://digitalbackoffice.co.uk/)** brand identity:
+- **Primary Color:** `#2cb8b2` (DBO Signature Teal)
+- **Background:** Crisp light mode (`#fbfcfd` canvas, `#f8fafc` sidebar, `#ffffff` cards)
+- **Typography:** Modern clean sans-serif with monospace data previews
+- **Logo:** Circular white `DB` badge inside `#2cb8b2` rounded container
 
 ---
 
-## Docker Compose Deployment
-
-Run the complete stack (PostgreSQL, FastAPI Backend, Next.js Frontend) with a single command:
-```bash
-docker-compose up --build
-```
-* Frontend: `http://localhost:3000`
-* Backend API: `http://localhost:8000`
-* Swagger Documentation: `http://localhost:8000/docs`
-
----
-
-## Automated Verification & Testing
-
-The repository includes a comprehensive Pytest test suite covering DuckDB queries, multi-agent workflows, statistical outlier detectors, security guardrails, and PostgreSQL authentication:
-
-```bash
-.\venv\Scripts\python.exe backend/run_tests.py
-```
-
-Test Results Summary:
-```
-backend/tests/test_agent_workflow.py::test_highest_revenue_by_region PASSED
-backend/tests/test_agent_workflow.py::test_monthly_sales_trends PASSED
-backend/tests/test_agent_workflow.py::test_top_five_customers_multi_table_join PASSED
-backend/tests/test_agent_workflow.py::test_underperforming_products PASSED
-backend/tests/test_agent_workflow.py::test_detect_anomalies_workflow PASSED
-backend/tests/test_agent_workflow.py::test_code_generation_sql_and_pandas PASSED
-backend/tests/test_anomaly.py::test_anomaly_detection_iqr_and_zscore PASSED
-backend/tests/test_auth.py::test_auth_registration_and_login PASSED
-backend/tests/test_auth.py::test_auth_forgot_and_reset_password PASSED
-backend/tests/test_engine.py::test_duckdb_registration_and_inspect PASSED
-backend/tests/test_engine.py::test_duckdb_query_execution PASSED
-backend/tests/test_guardrails.py::test_sql_guardrail_blocks_destructive_commands PASSED
-backend/tests/test_guardrails.py::test_sql_guardrail_permits_read_only_queries PASSED
-backend/tests/test_guardrails.py::test_prompt_injection_guardrail PASSED
-
-============================= 14 passed in 50.40s =============================
-```
-
-Frontend production verification:
-```bash
-cd frontend
-npm run build
-```
-Generates 100% static and dynamic optimized routes without errors or warnings.
-
----
-
-## Custom Domain Deployment Guide
-
-To deploy this application to production with a custom domain (e.g. `analytics.yourdomain.com`):
-
-### 1. DNS Configuration
-Add the following DNS records at your domain registrar:
-* **Type:** `A` | **Name:** `analytics` (or `@` for apex) | **Value:** `<YOUR_SERVER_PUBLIC_IP>` | **TTL:** `300`
-* **Type:** `CNAME` | **Name:** `www.analytics` | **Value:** `analytics.yourdomain.com` | **TTL:** `300`
-
-### 2. Reverse Proxy Setup (Nginx)
-Create `/etc/nginx/sites-available/analytics.yourdomain.com`:
-```nginx
-server {
-    listen 80;
-    server_name analytics.yourdomain.com;
-
-    # Next.js Frontend
-    location / {
-        proxy_pass http://127.0.0.1:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-
-    # FastAPI Backend API
-    location /api/ {
-        proxy_pass http://127.0.0.1:8000/api/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-Enable the configuration and obtain a free Let's Encrypt SSL certificate:
-```bash
-sudo ln -s /etc/nginx/sites-available/analytics.yourdomain.com /etc/nginx/sites-enabled/
-sudo certbot --nginx -d analytics.yourdomain.com
-```
-
-### 3. Alternative: Caddyfile (Automatic SSL)
-```caddy
-analytics.yourdomain.com {
-    handle /api/* {
-        reverse_proxy 127.0.0.1:8000
-    }
-    handle {
-        reverse_proxy 127.0.0.1:3000
-    }
-}
-```
-
----
-
-## Example Queries
-
-| Objective | Example Prompt | Expected Behavior |
-| :--- | :--- | :--- |
-| **Aggregations** | "Which region generated the highest revenue?" | Computes revenue grouped by region; renders Bar Chart. |
-| **Time Trends** | "Show monthly sales trends." | Aggregates volume by month; renders interactive Line Chart. |
-| **Underperformers** | "Which products are underperforming?" | Identifies lowest-volume items; outlines turnover metrics. |
-| **Multi-Table Joins** | "What are the top five customers?" | Automatically joins customer and transaction tables on ID. |
-| **Anomaly Detection** | "Detect anomalies in the dataset." | Runs IQR and Z-Score routines; flags numerical outliers. |
-| **SQL Generation** | "Generate SQL for this analysis." | Produces formatted DuckDB SQL with explanation of clauses. |
-
----
-
-## Technical Notes & Implementation Decisions
-
-1. **In-Memory DuckDB Engine:** Uploaded CSV files are registered into in-memory DuckDB virtual tables. This provides sub-millisecond execution times for millions of rows without disk bloat or residual file leaks.
-2. **Deterministic Code-First Execution:** LLM reasoning is strictly segregated into SQL generation and result interpretation. Aggregations, rankings, and mathematical calculations are executed by the database engine, preventing numerical hallucinations.
-3. **Graceful Authentication Fallback:** The backend connects to PostgreSQL 16 by default and falls back gracefully to SQLite if the database server is undergoing maintenance.
-4. **Zero-Telemetry Privacy:** Uploaded datasets are never transmitted to third parties or used for model training. Only aggregated column statistics and necessary schema definitions are referenced during query synthesis.
+## 📄 License
+This project is proprietary and built for enterprise analytics applications.

@@ -29,13 +29,16 @@ router = APIRouter(prefix="/api", tags=["Agent Chat & Analysis"])
 @router.get("/conversations", response_model=list[ConversationSummary])
 def list_conversations(user_id: Optional[int] = None, db: Session = Depends(get_db)):
     """
-    Returns all persisted chat conversations from the database.
-    If user_id is provided, filters for that user's recent chats plus unassigned guest chats.
+    Returns persisted chat conversations for the specific logged-in user.
+    If no user_id is provided (trial mode), returns empty list (no saved chats for trial).
     """
-    query = db.query(Conversation)
-    if user_id:
-        query = query.filter((Conversation.user_id == user_id) | (Conversation.user_id == None))
-    convs = query.order_by(Conversation.updated_at.desc()).all()
+    if not user_id:
+        return []
+
+    convs = db.query(Conversation).filter(
+        Conversation.user_id == user_id
+    ).order_by(Conversation.updated_at.desc()).all()
+
     results = []
     for c in convs:
         count = db.query(ChatMessageModel).filter(ChatMessageModel.conversation_id == c.id).count()
@@ -130,18 +133,40 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
     if not request.message.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Message cannot be empty.")
 
-    # 1. Ensure conversation exists in DB and attach user_id
+    # 1. Manage conversation persistence (Always track in DB so session memory and active_tables are retained)
     session_id = request.session_id or str(uuid.uuid4())
     conv = db.query(Conversation).filter(Conversation.id == session_id).first()
+    user_msg_id = None
+
     if not conv:
-        title = request.message.strip()
-        if len(title) > 38:
-            title = title[:38] + "..."
+        msg_clean = request.message.strip()
+        if "overview" in msg_clean.lower():
+            tgt = request.table_names[0] if request.table_names else "Data"
+            title = f"Overview of {tgt}"
+        elif any(w in msg_clean.lower() for w in ["highest revenue", "top revenue"]):
+            title = "Highest Revenue Analysis"
+        elif any(w in msg_clean.lower() for w in ["lowest revenue", "least revenue"]):
+            title = "Lowest Revenue Analysis"
+        elif "monthly" in msg_clean.lower() or "seasonality" in msg_clean.lower():
+            title = "Monthly Sales Trends"
+        elif "underperform" in msg_clean.lower():
+            title = "Underperforming Products"
+        elif "top" in msg_clean.lower() and "customer" in msg_clean.lower():
+            title = "Top Customers Analysis"
+        elif "pie" in msg_clean.lower():
+            title = "Pie Chart Analysis"
+        elif "anomal" in msg_clean.lower() or "outlier" in msg_clean.lower():
+            title = "Anomaly Detection"
+        elif len(msg_clean) > 38:
+            title = msg_clean[:38] + "..."
+        else:
+            title = msg_clean
+
         conv = Conversation(
             id=session_id,
             title=title,
             user_id=request.user_id,
-            active_tables=json.dumps(request.table_names)
+            active_tables=json.dumps(request.table_names or [])
         )
         db.add(conv)
         db.commit()
@@ -164,50 +189,69 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
         response_payload=None,
         created_at=datetime.utcnow()
     )
+    user_msg_id = user_msg.id
     db.add(user_msg)
     db.commit()
 
-    # 3. Check LRU Cache
-    cached = query_cache.get(request.message, request.table_names)
-    if cached:
-        response = ChatResponse(**cached)
-        response.session_id = conv.id
-        response.reasoning_steps = ["[Cache Hit] Returned pre-computed deterministic results from memory (<1ms)."] + response.reasoning_steps
-
-        # Save assistant message
-        assistant_msg = ChatMessageModel(
-            id=str(uuid.uuid4()),
-            conversation_id=conv.id,
-            role="assistant",
-            content=response.natural_language_answer,
-            response_payload=response.model_dump_json(),
-            created_at=datetime.utcnow()
-        )
-        db.add(assistant_msg)
-        conv.updated_at = datetime.utcnow()
-        db.commit()
-        return response
-
-    # 4. Initialize graph state
-    active_tables = request.table_names or conv.get_tables_list()
+    # 3. Resolve active tables & conversation memory from database
+    db_engine.auto_register_uploads()
+    active_tables = request.table_names or (conv.get_tables_list() if conv else [])
     if not active_tables:
-        db_engine.auto_register_uploads()
         active_tables = list(db_engine.registered_tables.keys())
 
-    # Ensure conversation permanently remembers these active tables for subsequent queries
-    if active_tables:
+    for t in active_tables:
+        db_engine.ensure_table(t)
+
+    if conv and active_tables:
         existing = conv.get_tables_list()
         merged = list(dict.fromkeys(existing + active_tables))
         conv.set_tables_list(merged)
         db.commit()
 
+    # Fetch real conversation history
+    conversation_history = []
+    if conv and user_msg_id:
+        prev_messages = db.query(ChatMessageModel).filter(
+            ChatMessageModel.conversation_id == conv.id,
+            ChatMessageModel.id != user_msg_id
+        ).order_by(ChatMessageModel.created_at.asc()).all()
+
+        conversation_history = [
+            {"role": m.role, "content": m.content}
+            for m in prev_messages[-10:]
+        ]
+    elif request.conversation_history:
+        conversation_history = request.conversation_history[-10:]
+
+    # Check session-scoped cache
+    cached = query_cache.get(request.message, active_tables, session_id=session_id)
+    if cached:
+        response = ChatResponse(**cached)
+        response.session_id = session_id
+        response.reasoning_steps = ["[Cache Hit] Returned pre-computed deterministic results from memory (<1ms)."] + response.reasoning_steps
+
+        if conv:
+            assistant_msg = ChatMessageModel(
+                id=str(uuid.uuid4()),
+                conversation_id=conv.id,
+                role="assistant",
+                content=response.natural_language_answer,
+                response_payload=response.model_dump_json(),
+                created_at=datetime.utcnow()
+            )
+            db.add(assistant_msg)
+            conv.updated_at = datetime.utcnow()
+            db.commit()
+        return response
+
+    # 4. Initialize graph state with database conversation memory
     initial_state = {
-        "session_id": conv.id,
+        "session_id": session_id,
         "message": request.message,
         "table_names": active_tables,
         "api_key": request.api_key,
         "model": request.model,
-        "conversation_history": [m.model_dump() for m in request.conversation_history],
+        "conversation_history": conversation_history,
         "start_time": time.time(),
         "reasoning_steps": []
     }
@@ -218,7 +262,7 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Agent workflow error: {str(e)}")
 
     response = ChatResponse(
-        session_id=conv.id,
+        session_id=session_id,
         query_type=final_state.get("intent", "data_analysis"),
         natural_language_answer=final_state.get("natural_language_answer", "Analysis finished."),
         reasoning_steps=final_state.get("reasoning_steps", []),
@@ -233,21 +277,22 @@ async def chat_with_agent(request: ChatRequest, db: Session = Depends(get_db)):
         execution_time_ms=final_state.get("execution_time_ms", 0.0)
     )
 
-    # 5. Persist Assistant Response and Payload to DB
-    assistant_msg = ChatMessageModel(
-        id=str(uuid.uuid4()),
-        conversation_id=conv.id,
-        role="assistant",
-        content=response.natural_language_answer,
-        response_payload=response.model_dump_json(),
-        created_at=datetime.utcnow()
-    )
-    db.add(assistant_msg)
-    conv.updated_at = datetime.utcnow()
-    db.commit()
+    # 5. Persist Assistant Response and Payload to DB (authenticated users only)
+    if conv:
+        assistant_msg = ChatMessageModel(
+            id=str(uuid.uuid4()),
+            conversation_id=conv.id,
+            role="assistant",
+            content=response.natural_language_answer,
+            response_payload=response.model_dump_json(),
+            created_at=datetime.utcnow()
+        )
+        db.add(assistant_msg)
+        conv.updated_at = datetime.utcnow()
+        db.commit()
 
-    # Cache response
-    query_cache.set(request.message, request.table_names, response.model_dump())
+    # Cache response scoped to this session
+    query_cache.set(request.message, active_tables, response.model_dump(), session_id=session_id)
 
     return response
 

@@ -44,6 +44,7 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   responsePayload?: ChatResponse;
+  attachedFiles?: { table_name: string; file_name: string; row_count?: number; column_count?: number }[];
 }
 
 export interface ChatResponse {
@@ -69,12 +70,17 @@ export interface UserProfile {
   id: number;
   email: string;
   full_name?: string;
+  phone_number?: string;
+  company?: string;
+  role?: string;
+  is_2fa_enabled?: boolean;
   created_at: string;
 }
 
 export interface AuthResponse {
   success: boolean;
   message: string;
+  requires_2fa?: boolean;
   user?: UserProfile;
   token?: string;
 }

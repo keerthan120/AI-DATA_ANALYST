@@ -4,9 +4,6 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "AI Data Analyst | Digital Back Office",
   description: "Enterprise AI Data Analyst powered by Digital Back Office.",
-  icons: {
-    icon: "/icon.svg",
-  },
 };
 
 export default function RootLayout({

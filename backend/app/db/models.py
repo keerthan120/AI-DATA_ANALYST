@@ -12,6 +12,12 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     hashed_password = Column(String(255), nullable=False)
     full_name = Column(String(255), nullable=True)
+    phone_number = Column(String(50), nullable=True)
+    company = Column(String(100), nullable=True, default="Digital Back Office")
+    role = Column(String(100), nullable=True, default="Data Analyst")
+    is_2fa_enabled = Column(Integer, nullable=True, default=0) # 0 = disabled, 1 = enabled
+    two_factor_code = Column(String(10), nullable=True)
+    two_factor_expires = Column(DateTime, nullable=True)
     reset_token = Column(String(255), nullable=True)
     reset_token_expires = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -61,9 +67,17 @@ class ChatMessageModel(Base):
 def ensure_db_schema():
     Base.metadata.create_all(bind=engine)
     with engine.connect() as conn:
-        try:
-            # Check if active_tables column exists in conversations
-            conn.execute(text("ALTER TABLE conversations ADD COLUMN active_tables TEXT;"))
-            conn.commit()
-        except Exception:
-            pass  # Column already exists
+        for stmt in [
+            "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS active_tables TEXT;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number VARCHAR(50);",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS company VARCHAR(100);",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(100);",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_2fa_enabled INTEGER DEFAULT 0;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_code VARCHAR(10);",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_expires TIMESTAMP;"
+        ]:
+            try:
+                conn.execute(text(stmt))
+                conn.commit()
+            except Exception:
+                pass

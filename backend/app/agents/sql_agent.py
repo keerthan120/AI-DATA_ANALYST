@@ -14,6 +14,7 @@ class SQLAgent:
         table_names: list[str],
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        conversation_history: list[dict[str, Any]] = [],
     ) -> tuple[Optional[str], Optional[str], list[dict[str, Any]], int, Optional[str], list[str]]:
         """
         Generates SQL and Pandas code via LLM (or robust dynamic semantic fallback), validates via guardrails, and executes against DuckDB.
@@ -33,16 +34,17 @@ class SQLAgent:
                     user_query=user_query,
                     schema_context=schema_context,
                     api_key=effective_key,
-                    model=effective_model
+                    model=effective_model,
+                    conversation_history=conversation_history
                 )
                 reasoning_steps.extend(steps)
             except Exception as e:
                 reasoning_steps.append(f"LLM API call failed or rate-limited ({str(e)}). Falling back to dynamic semantic query generator.")
-                sql_query, python_code, steps = SQLAgent._dynamic_semantic_sql(user_query, table_names)
+                sql_query, python_code, steps = SQLAgent._dynamic_semantic_sql(user_query, table_names, conversation_history)
                 reasoning_steps.extend(steps)
         else:
             reasoning_steps.append("Activating high-precision semantic SQL & Pandas engine.")
-            sql_query, python_code, steps = SQLAgent._dynamic_semantic_sql(user_query, table_names)
+            sql_query, python_code, steps = SQLAgent._dynamic_semantic_sql(user_query, table_names, conversation_history)
             reasoning_steps.extend(steps)
 
         if not sql_query:
@@ -71,7 +73,8 @@ class SQLAgent:
         user_query: str,
         schema_context: str,
         api_key: str,
-        model: str
+        model: str,
+        conversation_history: list[dict[str, Any]] = []
     ) -> tuple[Optional[str], Optional[str], list[str]]:
         client = OpenAI(
             base_url=settings.OPENROUTER_BASE_URL,
@@ -97,12 +100,14 @@ Schema Context:
 {schema_context}
 """
 
+        messages = [{"role": "system", "content": system_prompt}]
+        for m in conversation_history[-6:]:
+            messages.append({"role": m.get("role", "user"), "content": m.get("content", "")})
+        messages.append({"role": "user", "content": f"User Query: {user_query}"})
+
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"User Query: {user_query}"}
-            ],
+            messages=messages,
             response_format={"type": "json_object"},
             temperature=0.1
         )
@@ -125,7 +130,8 @@ Schema Context:
     @staticmethod
     def _dynamic_semantic_sql(
         user_query: str,
-        table_names: list[str]
+        table_names: list[str],
+        conversation_history: list[dict[str, Any]] = []
     ) -> tuple[Optional[str], Optional[str], list[str]]:
         """
         Dynamically generates 100% accurate DuckDB SQL and Pandas code by matching query intent and keywords
@@ -134,23 +140,94 @@ Schema Context:
         q = user_query.lower()
         steps: list[str] = []
         all_schemas = db_engine.get_registered_tables_info()
+        # Strictly scope to the active chat's uploaded tables
+        if table_names:
+            scoped = [s for s in all_schemas if s.table_name in table_names]
+            if scoped:
+                all_schemas = scoped
 
         if not all_schemas:
             steps.append("No active tables registered in DuckDB.")
             return None, None, steps
 
-        # 1. Determine target table
+        # 1. Determine target table intelligently across multi-dataset workspace
         target_schema = None
-        if table_names:
-            for s in all_schemas:
-                if s.table_name in table_names:
-                    target_schema = s
-                    break
+
+        # Exclude pure metadata / dictionary tables from numerical and chart analysis unless explicitly asked for
+        is_metadata_query = any(k in q for k in ["dictionary", "data_dictionary", "metadata", "definition", "schema", "key_type"])
+
+        # A. Check if query explicitly targets a table name or its stem (e.g. 'region' -> 'regions', 'sale' -> 'sales')
+        for s in all_schemas:
+            t_name = s.table_name.lower()
+            stem = t_name.rstrip('s')
+            if t_name in q or (len(stem) >= 4 and stem in q):
+                target_schema = s
+                break
+
+        # B. Check if query mentions specific column names present in schemas (e.g. 'revenue', 'profit', 'quantity', 'region_name')
         if not target_schema:
             for s in all_schemas:
-                if s.table_name.lower() in q:
+                if not is_metadata_query and "dictionary" in s.table_name.lower():
+                    continue
+                for c in s.columns:
+                    col_lower = c.name.lower()
+                    if col_lower in q and len(col_lower) >= 3:
+                        target_schema = s
+                        break
+                if target_schema:
+                    break
+
+        # C. Check if query asks for monthly trends / dates (prefer tables with date columns and numeric metrics)
+        if not target_schema and any(k in q for k in ["monthly", "trend", "seasonality", "over time", "by month", "timeline"]):
+            for s in all_schemas:
+                has_date = any("date" in c.name.lower() or any(t in c.dtype.upper() for t in ["DATE", "TIME"]) for c in s.columns)
+                has_metric = any(any(t in c.dtype.upper() for t in ["INT", "DOUBLE", "FLOAT", "DECIMAL"]) for c in s.columns)
+                if has_date and has_metric:
                     target_schema = s
                     break
+
+        # D. Check if query asks for products, customers, or regions across column names
+        if not target_schema:
+            for s in all_schemas:
+                if not is_metadata_query and "dictionary" in s.table_name.lower():
+                    continue
+                if any(k in q for k in ["product", "sku"]) and any("product" in c.name.lower() for c in s.columns):
+                    target_schema = s
+                    break
+                if any(k in q for k in ["customer", "client"]) and any("customer" in c.name.lower() for c in s.columns):
+                    target_schema = s
+                    break
+                if any(k in q for k in ["region", "territory", "location"]) and any("region" in c.name.lower() for c in s.columns):
+                    target_schema = s
+                    break
+
+        # E. If query asks for charts, metrics, rankings, or summaries (prefer fact table with metrics)
+        if not target_schema and (any(k in q for k in ["pie", "bar", "chart", "scatter", "plot", "revenue", "sales", "profit", "cost", "quantity", "highest", "lowest", "top", "sum", "avg", "total"]) or not is_metadata_query):
+            # Sort non-dictionary schemas by count of numeric columns and row count descending
+            candidate_schemas = [s for s in all_schemas if "dictionary" not in s.table_name.lower()]
+            if candidate_schemas:
+                candidate_schemas.sort(
+                    key=lambda s: (
+                        sum(1 for c in s.columns if any(t in c.dtype.upper() for t in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "BIGINT"])),
+                        s.row_count
+                    ),
+                    reverse=True
+                )
+                target_schema = candidate_schemas[0]
+
+        # F. Check conversation history context
+        if not target_schema and conversation_history:
+            for prev_m in reversed(conversation_history):
+                prev_text = prev_m.get("content", "").lower()
+                for s in all_schemas:
+                    t_name = s.table_name.lower()
+                    stem = t_name.rstrip('s')
+                    if t_name in prev_text or (len(stem) >= 4 and stem in prev_text):
+                        target_schema = s
+                        break
+                if target_schema:
+                    break
+
         if not target_schema:
             target_schema = all_schemas[0]
 
@@ -211,11 +288,11 @@ Schema Context:
         # Resolve primary dimension / grouping column based on query keywords
         dim_col = None
         if any(k in q for k in ["region", "area", "territory", "location", "state", "country"]):
-            dim_col = find_column(["region_id", "region", "country", "state", "territory"])
+            dim_col = find_column(["region_name", "region", "region_id", "country", "state", "territory"])
         elif any(k in q for k in ["customer", "client", "buyer"]):
-            dim_col = find_column(["customer_name", "customer_id", "customer", "client"])
+            dim_col = find_column(["customer_name", "customer", "customer_id", "client"])
         elif any(k in q for k in ["product", "item", "sku"]):
-            dim_col = find_column(["product_name", "product_id", "product", "sku", "item"])
+            dim_col = find_column(["product_name", "product", "product_id", "sku", "item"])
         elif any(k in q for k in ["channel"]):
             dim_col = find_column(["sales_channel", "channel"])
         elif any(k in q for k in ["status"]):
@@ -228,7 +305,22 @@ Schema Context:
                     dim_col = col.name
                     break
 
+        if not dim_col:
+            # Prefer readable categorical columns over raw unique IDs
+            for cand in ["sales_channel", "region_name", "region_id", "channel", "category", "product_category", "payment_status", "status", "country"]:
+                col = find_column([cand])
+                if col:
+                    dim_col = col
+                    break
+
+        if not dim_col:
+            varchar_cols = [c.name for c in columns if any(t in c.dtype.upper() for t in ["VARCHAR", "TEXT", "STRING"]) and not c.name.lower().endswith("line_item_id")]
+            dim_col = varchar_cols[0] if varchar_cols else col_names[0]
+
         date_col = find_column(["order_date", "date", "created_at", "timestamp", "time"])
+        is_lowest = any(k in q for k in ["lowest", "bottom", "least", "worst", "underperform", "minimum", "min", "slowest"])
+        order_dir = "ASC" if is_lowest else "DESC"
+        limit_n = 5 if (is_lowest or "top 5" in q or "top five" in q or "which" in q) else 10
 
         # Multi-table relational join detection (e.g. regions + sales)
         if not metric_col and len(all_schemas) > 1:
@@ -252,8 +344,8 @@ SELECT a."{display_col}",
 FROM "{table_name}" a
 JOIN "{other.table_name}" b ON a."{join_key}" = b."{join_key}"
 GROUP BY a."{display_col}"
-ORDER BY total_{o_metric} DESC
-LIMIT 10;
+ORDER BY total_{o_metric} {order_dir}
+LIMIT {limit_n};
 """
                         pandas_code = f"""import pandas as pd
 
@@ -264,22 +356,16 @@ result = (
     merged.groupby('{display_col}', as_index=False)
     .agg(total_{o_metric}=('{o_metric}', 'sum'), count=('{join_key}', 'count'))
     .round({{'total_{o_metric}': 2}})
-    .sort_values(by='total_{o_metric}', ascending=False)
-    .head(10)
+    .sort_values(by='total_{o_metric}', ascending={is_lowest})
+    .head({limit_n})
 )
 print(result)"""
                         return sql.strip(), pandas_code.strip(), steps
 
-        # PATTERN A: Region / Dimension Ranking or Highest ("which region generated highest revenue", "top 5 products", etc.)
-        if dim_col and (any(k in q for k in ["which", "highest", "top", "best", "lead", "most", "compare"]) or "region" in q or "product" in q or "customer" in q):
-            limit_n = 10
-            if "top 5" in q or "top five" in q:
-                limit_n = 5
-            elif "highest" in q or "which" in q:
-                limit_n = 5
-
+        # PATTERN A: Region / Dimension Ranking or Highest/Lowest ("which region generated highest revenue", "lowest revenue", "top 5 products", etc.)
+        if dim_col and (any(k in q for k in ["which", "highest", "top", "best", "lead", "most", "compare", "lowest", "bottom", "least", "worst", "underperform"]) or "region" in q or "product" in q or "customer" in q):
             if metric_col:
-                steps.append(f"Identified ranking aggregation for dimension '{dim_col}' by metric '{metric_col}'.")
+                steps.append(f"Identified ranking aggregation for dimension '{dim_col}' by metric '{metric_col}' ({order_dir}).")
                 sql = f"""
 SELECT "{dim_col}",
        ROUND(SUM("{metric_col}"), 2) AS total_{metric_col},
@@ -288,7 +374,7 @@ SELECT "{dim_col}",
 FROM "{table_name}"
 WHERE "{dim_col}" IS NOT NULL
 GROUP BY "{dim_col}"
-ORDER BY total_{metric_col} DESC
+ORDER BY total_{metric_col} {order_dir}
 LIMIT {limit_n};
 """
                 pandas_code = f"""import pandas as pd
@@ -302,7 +388,7 @@ result = (
         transaction_count=('{dim_col}', 'count')
     )
     .round({{'total_{metric_col}': 2, 'avg_{metric_col}': 2}})
-    .sort_values(by='total_{metric_col}', ascending=False)
+    .sort_values(by='total_{metric_col}', ascending={is_lowest})
     .head({limit_n})
 )
 print(result)"""
@@ -314,7 +400,7 @@ SELECT "{dim_col}",
 FROM "{table_name}"
 WHERE "{dim_col}" IS NOT NULL
 GROUP BY "{dim_col}"
-ORDER BY record_count DESC
+ORDER BY record_count {order_dir}
 LIMIT {limit_n};
 """
                 pandas_code = f"""import pandas as pd
@@ -323,7 +409,7 @@ df = pd.read_csv('{table_name}.csv')
 result = (
     df.groupby('{dim_col}', as_index=False)
     .agg(record_count=('{dim_col}', 'count'))
-    .sort_values(by='record_count', ascending=False)
+    .sort_values(by='record_count', ascending={is_lowest})
     .head({limit_n})
 )
 print(result)"""

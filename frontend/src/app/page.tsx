@@ -63,17 +63,18 @@ export default function Home() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [datasetViewerOpen, setDatasetViewerOpen] = useState(false);
+  const [selectedTableIndex, setSelectedTableIndex] = useState(0);
   const [activeTabs, setActiveTabs] = useState<Record<string, "findings" | "chart" | "data" | "sql">>({});
   const [codeMode, setCodeMode] = useState<Record<string, "sql" | "pandas">>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
   const [greetingText, setGreetingText] = useState("Welcome");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const justCreatedConvRef = useRef<string | null>(null);
 
   // Time-aware greeting
   useEffect(() => {
@@ -92,15 +93,19 @@ export default function Home() {
         setUser(parsed);
         loadConversations(parsed.id);
       } else {
-        loadConversations();
+        setConversations([]);
       }
     } catch (e) {
       console.error("Failed to parse user profile:", e);
-      loadConversations();
+      setConversations([]);
     }
   }, []);
 
   const loadConversations = async (userId?: number) => {
+    if (!userId) {
+      setConversations([]);
+      return;
+    }
     try {
       const convs = await fetchConversations(userId);
       setConversations(convs);
@@ -109,61 +114,26 @@ export default function Home() {
     }
   };
 
-  const updateDynamicSuggestions = (tableList: TableSchema[]) => {
-    if (!tableList || tableList.length === 0) {
-      setDynamicSuggestions([]);
-      return;
-    }
-    const t = tableList[0];
-    const numCol = t.columns.find((c) =>
-      ["INT", "DOUBLE", "FLOAT", "DECIMAL", "HUGEINT"].some((type) => c.dtype.toUpperCase().includes(type))
-    );
-    const catCol = t.columns.find(
-      (c) =>
-        !["INT", "DOUBLE", "FLOAT", "DECIMAL", "DATE", "TIME"].some((type) => c.dtype.toUpperCase().includes(type))
-    );
-    const dateCol = t.columns.find((c) =>
-      ["DATE", "TIME", "TIMESTAMP"].some((type) => c.dtype.toUpperCase().includes(type)) ||
-      c.name.toLowerCase().includes("date")
-    );
-
-    const suggestions: string[] = [];
-    if (catCol && numCol) {
-      suggestions.push(`Which ${catCol.name} generated the highest ${numCol.name}?`);
-      suggestions.push(`What are the top 5 ${catCol.name}s by total ${numCol.name}?`);
-    }
-    if (dateCol && numCol) {
-      suggestions.push(`Show monthly trends of ${numCol.name} over time`);
-      suggestions.push(`Forecast ${numCol.name} for the next 4 periods`);
-    } else if (catCol) {
-      suggestions.push(`Show distribution of records across ${catCol.name}`);
-    }
-    suggestions.push(`Run data quality and hygiene audit on ${t.table_name}`);
-    if (numCol) {
-      suggestions.push(`Detect anomalies and statistical outliers in ${numCol.name}`);
-    } else {
-      suggestions.push(`Detect anomalies in this dataset`);
-    }
-    setDynamicSuggestions(suggestions);
-  };
-
   // Load selected conversation from DB
   useEffect(() => {
     if (!activeConvId) {
-      fetchTables()
-        .then((t) => {
-          if (t && t.length > 0) {
-            setTables(t);
-            updateDynamicSuggestions(t);
-          }
-        })
-        .catch(() => {});
+      setMessages([]);
+      setTables([]);
       return;
     }
+
+    // If this conversation was just initiated by our local handleSend, avoid wiping the UI
+    if (justCreatedConvRef.current === activeConvId) {
+      justCreatedConvRef.current = null;
+      return;
+    }
+
+    // Immediately clear previous messages to avoid chat bleeding across conversations
+    setMessages([]);
     setLoadingHistory(true);
     fetchConversation(activeConvId)
       .then(async (detail) => {
-        const loaded: ChatMessage[] = detail.messages.map((m) => ({
+        const loaded: ChatMessage[] = (detail.messages || []).map((m) => ({
           id: m.id,
           role: m.role as "user" | "assistant",
           content: m.content,
@@ -179,7 +149,6 @@ export default function Home() {
           }
           if (convTables && convTables.length > 0) {
             setTables(convTables);
-            updateDynamicSuggestions(convTables);
           }
         } catch {
           // keep existing tables
@@ -266,13 +235,15 @@ export default function Home() {
     if (!text && attachedFiles.length === 0) return;
     if (loading) return;
 
-    const currentSessionId = activeConvId || `conv-${Date.now()}`;
+    const currentSessionId = activeConvId || `conv-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const timestampStr = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
     let activeTableList = [...tables];
     let queryToSend = text;
 
     setLoading(true);
+
+    let attachedFileList: { table_name: string; file_name: string; row_count?: number; column_count?: number }[] | undefined = undefined;
 
     // If files are attached, upload all into DuckDB scoped to this conversation!
     if (attachedFiles.length > 0) {
@@ -281,13 +252,23 @@ export default function Home() {
       setStatusNotice(`Uploading and profiling ${filesToUpload.length} CSV file(s) into DuckDB...`);
 
       try {
-        const uploadedTables = await uploadFiles(filesToUpload, currentSessionId);
+        const uploadedTables = await uploadFiles(filesToUpload, currentSessionId, user?.id);
         activeTableList = uploadedTables;
         setTables(uploadedTables);
-        updateDynamicSuggestions(uploadedTables);
+        attachedFileList = uploadedTables.map((t) => ({
+          table_name: t.table_name,
+          file_name: t.file_name,
+          row_count: t.row_count,
+          column_count: t.column_count,
+        }));
 
         if (!queryToSend) {
-          queryToSend = `Explain and provide an analytical overview of the uploaded dataset '${uploadedTables[0].table_name}'.`;
+          if (uploadedTables.length === 1) {
+            queryToSend = `Explain and provide an analytical overview of the uploaded dataset '${uploadedTables[0].table_name}'.`;
+          } else {
+            const names = uploadedTables.map((t) => `'${t.table_name}'`).join(", ");
+            queryToSend = `Explain and provide an analytical overview of all ${uploadedTables.length} uploaded datasets: ${names}.`;
+          }
         }
       } catch (err: any) {
         setStatusNotice(`Upload error: ${err.message}`);
@@ -302,6 +283,7 @@ export default function Home() {
       role: "user",
       content: queryToSend,
       timestamp: timestampStr,
+      attachedFiles: attachedFileList,
     };
 
     setMessages((prev) => [...prev, userMsg]);
@@ -332,9 +314,12 @@ export default function Home() {
       setMessages((prev) => [...prev, assistantMsg]);
 
       if (!activeConvId) {
+        justCreatedConvRef.current = responsePayload.session_id;
         setActiveConvId(responsePayload.session_id);
       }
-      loadConversations(user?.id);
+      if (user?.id) {
+        loadConversations(user.id);
+      }
     } catch (err: any) {
       const errorMsg: ChatMessage = {
         id: `err-${Date.now()}`,
@@ -356,11 +341,12 @@ export default function Home() {
   };
 
   const startNewChat = () => {
+    justCreatedConvRef.current = null;
     setActiveConvId(null);
     setMessages([]);
     setTables([]);
     setAttachedFiles([]);
-    setDynamicSuggestions([]);
+    setSelectedTableIndex(0);
   };
 
   const handleSignOut = () => {
@@ -454,7 +440,9 @@ export default function Home() {
         isOpen={datasetViewerOpen}
         onClose={() => setDatasetViewerOpen(false)}
         tables={tables}
+        initialTableIndex={selectedTableIndex}
         onSelectPrompt={(p) => handleSend(p)}
+        onUploadClick={() => fileInputRef.current?.click()}
       />
 
       {/* Hidden File Input with Multiple File Selection */}
@@ -497,11 +485,26 @@ export default function Home() {
           <div className="px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-[#64748b] flex items-center justify-between">
             <span>Recent Chats</span>
             <span className="text-[10px] font-normal text-[#94a3b8]">
-              {conversations.length}
+              {user ? conversations.length : "Trial"}
             </span>
           </div>
 
-          {conversations.length === 0 ? (
+          {!user ? (
+            <div className="p-3 mx-1 my-3 rounded-xl bg-white border border-[#e2e8f0] text-center space-y-2.5 shadow-2xs">
+              <span className="inline-block px-2 py-0.5 rounded-full bg-[#eefaf9] text-[#0f766e] text-[10px] font-semibold border border-[#b2e8e5]">
+                Free Trial Mode
+              </span>
+              <p className="text-xs text-[#64748b] leading-relaxed">
+                You are using AI Data Analyst in free trial. Sign in to save your chat history and reopen past analyses.
+              </p>
+              <Link
+                href="/login"
+                className="inline-block w-full py-1.5 px-3 rounded-xl bg-[#2cb8b2] hover:bg-[#23a8a2] text-white text-xs font-semibold transition shadow-xs"
+              >
+                Sign In
+              </Link>
+            </div>
+          ) : conversations.length === 0 ? (
             <p className="text-xs text-[#94a3b8] text-center mt-6 px-4 leading-relaxed">
               No saved analyses yet. Queries are saved to your database automatically.
             </p>
@@ -509,7 +512,11 @@ export default function Home() {
             conversations.map((conv) => (
               <div
                 key={conv.id}
-                onClick={() => setActiveConvId(conv.id)}
+                onClick={() => {
+                  if (activeConvId !== conv.id) {
+                    setActiveConvId(conv.id);
+                  }
+                }}
                 className={`group flex items-center justify-between px-2.5 py-2 rounded-xl text-xs cursor-pointer transition ${
                   activeConvId === conv.id
                     ? "bg-white text-[#0f172a] font-medium border border-[#e2e8f0] shadow-xs"
@@ -540,22 +547,24 @@ export default function Home() {
             </div>
             <div className="min-w-0">
               <p className="text-xs font-semibold text-[#0f172a] truncate capitalize">
-                {userName}
+                {user ? userName : "Guest Analyst"}
               </p>
               <p className="text-[10px] text-[#64748b] truncate">
-                {user ? user.email : "Enterprise Workspace"}
+                {user ? user.email : "Free Trial (No history saved)"}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-1">
-            <button
-              onClick={() => setSettingsOpen(true)}
-              className="p-1.5 text-[#64748b] hover:text-[#0f172a] hover:bg-[#f1f5f9] rounded-lg transition"
-              title="Settings & Configuration"
-            >
-              <SettingsIcon className="w-4 h-4" />
-            </button>
+            {user && (
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="p-1.5 text-[#64748b] hover:text-[#0f172a] hover:bg-[#f1f5f9] rounded-lg transition"
+                title="Profile & User Settings"
+              >
+                <SettingsIcon className="w-4 h-4" />
+              </button>
+            )}
             {user ? (
               <button
                 onClick={handleSignOut}
@@ -567,7 +576,7 @@ export default function Home() {
             ) : (
               <Link
                 href="/login"
-                className="text-[11px] font-medium text-[#2cb8b2] hover:text-[#23a8a2] transition px-2 py-1 rounded hover:bg-[#eefaf9]"
+                className="text-[11px] font-semibold text-[#2cb8b2] hover:text-[#23a8a2] transition px-2.5 py-1 rounded-lg bg-[#eefaf9] hover:bg-[#dff5f3] border border-[#b2e8e5]"
               >
                 Sign In
               </Link>
@@ -598,16 +607,22 @@ export default function Home() {
 
           {/* Right Header Controls */}
           <div className="flex items-center gap-2">
-            {tables.length > 0 && (
-              <button
-                onClick={() => setDatasetViewerOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#b2e8e5] bg-[#eefaf9] hover:bg-[#dff5f3] text-xs font-semibold text-[#0f766e] transition shadow-2xs"
-                title="View full CSV table schema and rows"
-              >
-                <FileSpreadsheet className="w-3.5 h-3.5 text-[#2cb8b2]" />
-                <span>View Dataset ({tables.length})</span>
-              </button>
-            )}
+            <button
+              onClick={async () => {
+                if (tables.length === 0) {
+                  try {
+                    const t = await fetchTables(activeConvId || undefined);
+                    if (t && t.length > 0) setTables(t);
+                  } catch {}
+                }
+                setDatasetViewerOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#b2e8e5] bg-[#eefaf9] hover:bg-[#dff5f3] text-xs font-semibold text-[#0f766e] transition shadow-2xs"
+              title="View full CSV table schema and rows"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-[#2cb8b2]" />
+              <span>View Datasets {tables.length > 0 ? `(${tables.length})` : ""}</span>
+            </button>
 
             {messages.length > 0 && (
               <button
@@ -649,28 +664,6 @@ export default function Home() {
         {/* Central Chat / Message Thread Container (Expanded to eliminate empty space) */}
         <div className="flex-1 overflow-y-auto px-4 py-6">
           <div className="max-w-5xl xl:max-w-6xl mx-auto space-y-6">
-            {/* Active Dataset Banner whenever tables are loaded */}
-            {tables.length > 0 && (
-              <div className="flex items-center justify-between p-3 px-4 rounded-2xl bg-[#eefaf9] border border-[#b2e8e5] text-xs shadow-2xs">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <FileSpreadsheet className="w-4 h-4 text-[#2cb8b2] shrink-0" />
-                  <div className="truncate">
-                    <span className="font-bold text-[#0f766e]">
-                      Active Dataset: {tables.map((t) => `${t.table_name}.csv`).join(", ")}
-                    </span>
-                    <span className="text-[#0d9488] ml-2 font-mono">
-                      ({tables.reduce((acc, t) => acc + t.row_count, 0).toLocaleString()} records)
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setDatasetViewerOpen(true)}
-                  className="font-bold text-[#2cb8b2] hover:text-[#0f766e] bg-white px-3 py-1 rounded-xl border border-[#b2e8e5] hover:bg-[#eefaf9] transition shadow-2xs shrink-0 ml-3"
-                >
-                  Open Table Viewer
-                </button>
-              </div>
-            )}
             {/* If no messages: Display Personalized Greeting & Digital Back Office Welcome Card */}
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center min-h-[60vh] text-center pt-6 pb-12">
@@ -717,40 +710,102 @@ export default function Home() {
                   </p>
                 </div>
 
-                {/* Dynamic Suggestion Chips if a dataset is already registered */}
-                {dynamicSuggestions.length > 0 && (
-                  <div className="w-full max-w-xl mt-8">
-                    <div className="flex items-center gap-1.5 text-xs font-semibold text-[#64748b] mb-3 justify-center">
-                      <Sparkles className="w-3.5 h-3.5 text-[#2cb8b2]" />
-                      <span>Suggested analytical questions for active dataset:</span>
+              </div>
+            ) : (
+              <>
+                {/* Uploaded Datasets Preview Cards - Directly Open and Inspect Tables */}
+                {tables.length > 0 && (
+                  <div className="p-3.5 rounded-2xl bg-white border border-[#e2e8f0] shadow-xs space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-xs font-bold text-[#0f172a]">
+                        <FileSpreadsheet className="w-4 h-4 text-[#2cb8b2]" />
+                        <span>Uploaded Datasets ({tables.length}) — Click any file to preview data & schema:</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setSelectedTableIndex(0);
+                          setDatasetViewerOpen(true);
+                        }}
+                        className="text-xs font-semibold text-[#2cb8b2] hover:text-[#23a8a2] transition underline decoration-dotted"
+                      >
+                        Open Full Viewer →
+                      </button>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
-                      {dynamicSuggestions.map((promptText, idx) => (
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                      {tables.map((tbl, idx) => (
                         <button
-                          key={idx}
-                          onClick={() => handleSend(promptText)}
-                          className="p-3 rounded-xl border border-[#e2e8f0] bg-white hover:border-[#2cb8b2] hover:bg-[#eefaf9] text-xs text-[#0f172a] transition group flex items-start gap-2 shadow-xs"
+                          key={tbl.table_name}
+                          onClick={() => {
+                            setSelectedTableIndex(idx);
+                            setDatasetViewerOpen(true);
+                          }}
+                          className="flex items-center justify-between p-2.5 rounded-xl bg-[#f8fafc] hover:bg-[#eefaf9] border border-[#e2e8f0] hover:border-[#2cb8b2] text-xs font-semibold text-[#0f172a] transition shadow-2xs group text-left"
+                          title={`Click to preview rows and schema for ${tbl.file_name}`}
                         >
-                          <TrendingUp className="w-3.5 h-3.5 text-[#94a3b8] group-hover:text-[#2cb8b2] shrink-0 mt-0.5" />
-                          <span className="line-clamp-2">{promptText}</span>
+                          <div className="flex items-center gap-2.5 truncate min-w-0">
+                            <Table className="w-4 h-4 text-[#2cb8b2] group-hover:scale-110 transition shrink-0" />
+                            <div className="truncate">
+                              <p className="truncate font-semibold text-[#0f172a]">{tbl.file_name}</p>
+                              <p className="text-[10px] text-[#64748b] font-mono">
+                                {tbl.row_count.toLocaleString()} rows • {tbl.column_count} cols
+                              </p>
+                            </div>
+                          </div>
+                          <span className="shrink-0 text-[10px] px-2 py-1 rounded-lg bg-white border border-[#b2e8e5] text-[#0f766e] group-hover:bg-[#2cb8b2] group-hover:text-white transition font-semibold">
+                            Preview
+                          </span>
                         </button>
                       ))}
                     </div>
                   </div>
                 )}
-              </div>
-            ) : (
-              /* Message Thread */
-              messages.map((msg) => {
-                const payload = msg.responsePayload;
-                const activeTab = activeTabs[msg.id] || "findings";
-                const isPandas = codeMode[msg.id] === "pandas";
+
+                {/* Message Thread */}
+                {messages.map((msg) => {
+                  const payload = msg.responsePayload;
+                  const hasChart = Boolean(payload?.chart && payload.chart.type && payload.chart.type !== "none");
+                  const defaultTab = hasChart ? "chart" : "data";
+                  const activeTab = activeTabs[msg.id] || defaultTab;
+                  const isPandas = codeMode[msg.id] === "pandas";
 
                 if (msg.role === "user") {
                   return (
                     <div key={msg.id} className="flex justify-end">
-                      <div className="max-w-[80%] rounded-2xl px-4 py-3 bg-[#eefaf9] text-[#0f172a] text-sm leading-relaxed border border-[#b2e8e5] shadow-xs">
+                      <div className="max-w-[85%] rounded-2xl px-4 py-3 bg-[#eefaf9] text-[#0f172a] text-sm leading-relaxed border border-[#b2e8e5] shadow-xs">
                         <p className="whitespace-pre-wrap font-medium">{msg.content}</p>
+
+                        {/* Uploaded File Cards inside User Message with Direct Preview Action */}
+                        {msg.attachedFiles && msg.attachedFiles.length > 0 && (
+                          <div className="mt-2.5 pt-2 border-t border-[#b2e8e5]/60 flex flex-wrap gap-2">
+                            {msg.attachedFiles.map((file, fIdx) => (
+                              <button
+                                key={file.table_name + fIdx}
+                                onClick={() => {
+                                  const tIdx = tables.findIndex(
+                                    (t) => t.table_name === file.table_name || t.file_name === file.file_name
+                                  );
+                                  setSelectedTableIndex(tIdx >= 0 ? tIdx : 0);
+                                  setDatasetViewerOpen(true);
+                                }}
+                                className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white hover:bg-[#dff5f3] border border-[#b2e8e5] text-xs font-semibold text-[#0f766e] transition shadow-2xs group"
+                                title={`Click to preview rows and schema for ${file.file_name || file.table_name}`}
+                              >
+                                <FileSpreadsheet className="w-3.5 h-3.5 text-[#2cb8b2] group-hover:scale-110 transition shrink-0" />
+                                <span className="font-semibold">{file.file_name || `${file.table_name}.csv`}</span>
+                                {file.row_count !== undefined && (
+                                  <span className="text-[10px] text-[#0d9488] font-mono">
+                                    ({file.row_count.toLocaleString()} rows)
+                                  </span>
+                                )}
+                                <span className="text-[10px] font-semibold text-[#2cb8b2] bg-[#eefaf9] px-2 py-0.5 rounded-lg border border-[#b2e8e5] ml-1">
+                                  Preview & Open ↗
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
                         <span className="block text-[10px] text-[#0f766e] mt-1.5 text-right font-mono">
                           {msg.timestamp}
                         </span>
@@ -832,7 +887,7 @@ export default function Home() {
                                 <button
                                   onClick={() => setActiveTabs((p) => ({ ...p, [msg.id]: "data" }))}
                                   className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-semibold border-b-2 transition ${
-                                    activeTab === "data" || (!payload.chart && activeTab === "findings")
+                                    activeTab === "data"
                                       ? "border-[#2cb8b2] text-[#2cb8b2]"
                                       : "border-transparent text-[#64748b] hover:text-[#0f172a]"
                                   }`}
@@ -881,7 +936,7 @@ export default function Home() {
                             )}
 
                             {/* Data Table View */}
-                            {(activeTab === "data" || (!payload.chart && activeTab === "findings")) &&
+                            {activeTab === "data" &&
                               payload.data_preview &&
                               payload.data_preview.length > 0 && (
                                 <div className="overflow-x-auto max-h-72 scrollbar-thin">
@@ -984,8 +1039,9 @@ export default function Home() {
                     </div>
                   </div>
                 );
-              })
-            )}
+              })}
+            </>
+          )}
 
             {/* Loading Indicator */}
             {loading && (

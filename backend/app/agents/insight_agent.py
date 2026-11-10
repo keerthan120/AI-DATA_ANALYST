@@ -13,6 +13,7 @@ class InsightAgent:
         anomalies: list[AnomalyRecord],
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        conversation_history: list[dict[str, Any]] = [],
     ) -> tuple[str, list[str]]:
         """
         Synthesizes execution results into clear natural language answers and strategic business takeaways.
@@ -32,7 +33,8 @@ class InsightAgent:
                     data_results=data_results[:10],
                     anomalies=anomalies,
                     api_key=effective_key,
-                    model=effective_model
+                    model=effective_model,
+                    conversation_history=conversation_history
                 )
             except Exception:
                 pass
@@ -46,7 +48,8 @@ class InsightAgent:
         data_results: list[dict[str, Any]],
         anomalies: list[AnomalyRecord],
         api_key: str,
-        model: str
+        model: str,
+        conversation_history: list[dict[str, Any]] = [],
     ) -> tuple[str, list[str]]:
         client = OpenAI(
             base_url=settings.OPENROUTER_BASE_URL,
@@ -56,8 +59,10 @@ class InsightAgent:
         anomaly_summary = [f"{a.column_name}: {a.value} (Score: {a.score}) - {a.explanation}" for a in anomalies[:5]]
 
         prompt = f"""
-You are a Principal Data Analyst delivering executive findings to business stakeholders.
-Based ONLY on the actual data results below, answer the user's question with zero hallucination.
+You are a direct, practical, and helpful Data Analyst.
+Answer the user's question simply, clearly, and concisely based strictly on the query results.
+Do not overcomplicate, do not write pompous essays, and do not use generic corporate buzzwords.
+Provide the factual numbers, straightforward answer, and 2-3 brief practical bullet points.
 
 User Question: {user_query}
 Executed SQL: {sql_query}
@@ -65,8 +70,8 @@ Data Results: {json.dumps(data_results)}
 Detected Outliers/Anomalies: {json.dumps(anomaly_summary)}
 
 Return a strict JSON object with:
-- "answer": A direct, professional answer summarizing key figures and conclusions.
-- "insights": An array of 2-4 strategic business takeaways (e.g. percentages, leaders, risks, growth).
+- "answer": A direct, friendly answer directly stating the answer and numbers.
+- "insights": An array of 2-3 bullet points highlighting the main facts.
 """
 
         response = client.chat.completions.create(
@@ -118,42 +123,56 @@ Return a strict JSON object with:
             top_dim = first_row.get(dim_key, "Top Item")
             top_val = first_row.get(val_key, 0)
 
+            # Check if user asked for lowest / bottom / underperforming
+            is_lowest = any(k in q for k in ["lowest", "bottom", "least", "worst", "underperform", "minimum", "min"])
+
             # Currency / numeric formatting
             is_currency = any(c in val_key.lower() for c in ["revenue", "profit", "cost", "spent", "amount", "price", "inr"])
             prefix = "₹" if "inr" in val_key.lower() else ("$" if is_currency else "")
             
             val_formatted = f"{prefix}{top_val:,.2f}" if isinstance(top_val, (int, float)) else str(top_val)
+            clean_metric = val_key.replace('_', ' ').replace('total ', '').replace('monthly ', '')
 
-            # Specific Region response
-            if "region" in dim_key.lower() or "region" in q:
-                answer = f"Region **{top_dim}** generated the highest {val_key.replace('_', ' ')}, totaling **{val_formatted}**."
-            elif "product" in dim_key.lower() or "product" in q:
-                answer = f"Product **{top_dim}** is the top performer with a total of **{val_formatted}**."
-            elif "customer" in dim_key.lower() or "customer" in q:
-                answer = f"Customer **{top_dim}** generated the highest total of **{val_formatted}**."
-            elif "period" in dim_key.lower():
-                answer = f"Period **{top_dim}** recorded the highest volume with **{val_formatted}**."
+            # Derive entity type strictly from dimension key
+            dim_lower = dim_key.lower()
+            if "region" in dim_lower:
+                entity = "Region"
+            elif "product" in dim_lower:
+                entity = "Product"
+            elif "customer" in dim_lower:
+                entity = "Customer"
+            elif "period" in dim_lower or "date" in dim_lower or "month" in dim_lower:
+                entity = "Period"
+            elif "channel" in dim_lower:
+                entity = "Channel"
+            elif "manager" in dim_lower:
+                entity = "Sales Manager"
             else:
-                answer = f"The leading **{dim_key}** is **{top_dim}**, with a total of **{val_formatted}**."
+                entity = dim_key.replace('_', ' ').capitalize()
+
+            # Direct, natural language response
+            if is_lowest:
+                answer = f"{entity} **{top_dim}** recorded the lowest {clean_metric}, totaling **{val_formatted}**."
+            else:
+                answer = f"{entity} **{top_dim}** generated the highest {clean_metric}, totaling **{val_formatted}**."
 
             # Calculate total across all returned rows
             all_vals = [r.get(val_key, 0) for r in data_results if isinstance(r.get(val_key), (int, float))]
             if all_vals:
                 total_sum = sum(all_vals)
                 pct_share = round((top_val / total_sum) * 100, 1) if total_sum > 0 else 0
-                insights.append(f"**{top_dim}** represents **{pct_share}%** of the total {val_key.replace('_', ' ')} across all analyzed categories.")
+                insights.append(f"**{top_dim}** accounts for **{pct_share}%** of total {clean_metric} among compared {entity.lower()}s.")
 
             if len(data_results) > 1:
                 runner_up = data_results[1]
-                runner_dim = runner_up.get(dim_key, "Second Item")
+                runner_dim = runner_up.get(dim_key, "Next Item")
                 runner_val = runner_up.get(val_key, 0)
                 if isinstance(top_val, (int, float)) and isinstance(runner_val, (int, float)):
-                    diff = top_val - runner_val
-                    pct = round((diff / (runner_val or 1)) * 100, 1)
-                    insights.append(f"Outperformed the second highest ({runner_dim}) by {prefix}{diff:,.2f} (+{pct}%).")
+                    diff = abs(top_val - runner_val)
+                    insights.append(f"{'Lower than' if is_lowest else 'Ahead of'} next {entity.lower()} ({runner_dim}) by **{prefix}{diff:,.2f}**.")
             
             if anomalies:
-                insights.append(f"Statistical audit: {len(anomalies)} outliers detected in numerical distributions.")
+                insights.append(f"Identified {len(anomalies)} statistical outlier(s) in this segment.")
 
             return answer, insights
 

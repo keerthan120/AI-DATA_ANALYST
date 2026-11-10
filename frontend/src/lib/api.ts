@@ -39,11 +39,14 @@ export async function deleteConversation(id: string): Promise<void> {
 }
 
 // CSV Data & Ingestion
-export async function uploadFiles(files: File[], conversationId?: string): Promise<TableSchema[]> {
+export async function uploadFiles(files: File[], conversationId?: string, userId?: number): Promise<TableSchema[]> {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
   if (conversationId) {
     formData.append("conversation_id", conversationId);
+  }
+  if (userId) {
+    formData.append("user_id", String(userId));
   }
 
   const res = await fetch(`${API_BASE}/upload`, {
@@ -111,7 +114,7 @@ export async function sendChatMessage(params: {
 }
 
 // Authentication
-export async function registerUser(data: { email: string; password: string; full_name?: string; fullName?: string }): Promise<AuthResponse> {
+export async function registerUser(data: { email: string; password: string; full_name?: string; fullName?: string; phone_number?: string; phoneNumber?: string }): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -119,6 +122,7 @@ export async function registerUser(data: { email: string; password: string; full
       email: data.email,
       password: data.password,
       full_name: data.full_name || data.fullName,
+      phone_number: data.phone_number || data.phoneNumber,
     }),
   });
   if (!res.ok) {
@@ -137,6 +141,41 @@ export async function loginUser(data: { email: string; password: string }): Prom
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
     throw new Error(errorData.detail || "Login failed.");
+  }
+  return res.json();
+}
+
+export async function verify2FA(data: { email: string; code: string }): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/verify-2fa`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "2-Step Verification failed.");
+  }
+  return res.json();
+}
+
+export async function updateProfileApi(data: {
+  email: string;
+  full_name?: string;
+  phone_number?: string;
+  company?: string;
+  role?: string;
+  is_2fa_enabled?: boolean;
+  current_password?: string;
+  new_password?: string;
+}): Promise<AuthResponse> {
+  const res = await fetch(`${API_BASE}/auth/profile`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Failed to update profile.");
   }
   return res.json();
 }

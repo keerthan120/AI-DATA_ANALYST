@@ -12,25 +12,28 @@ class DuckDBEngine:
         self.auto_register_uploads()
 
     def auto_register_uploads(self):
-        """Scans the upload directory and automatically registers all existing CSV files."""
+        """Scans the upload directory and automatically registers all existing CSV files into DuckDB views."""
         try:
             from app.config import settings
             upload_dir = Path(settings.UPLOAD_DIR)
             if upload_dir.exists():
                 for f in upload_dir.glob("*.csv"):
                     safe_name = f.stem.replace("-", "_").replace(" ", "_")
-                    if safe_name not in self.registered_tables:
-                        try:
-                            self.register_csv(safe_name, f)
-                        except Exception:
-                            pass
+                    try:
+                        self.register_csv(safe_name, f)
+                    except Exception:
+                        pass
         except Exception:
             pass
 
     def ensure_table(self, table_name: str) -> bool:
-        """Ensures a table is registered, checking disk if necessary."""
+        """Ensures a table is registered and its view exists in DuckDB."""
         if table_name in self.registered_tables:
-            return True
+            try:
+                self.conn.execute(f"SELECT 1 FROM \"{table_name}\" LIMIT 1")
+                return True
+            except Exception:
+                pass
         self.auto_register_uploads()
         return table_name in self.registered_tables
 
@@ -130,10 +133,17 @@ class DuckDBEngine:
     def execute_query(self, sql: str, max_rows: int = 500) -> tuple[list[dict[str, Any]], int]:
         """
         Executes a SELECT query and returns rows as dicts and total row count.
+        Auto-recovers if a view was not registered yet.
         """
-        # Execute query
-        rel = self.conn.execute(sql)
-        df = rel.fetchdf()
+        try:
+            rel = self.conn.execute(sql)
+            df = rel.fetchdf()
+        except Exception:
+            # Re-register all files from uploads and retry once
+            self.auto_register_uploads()
+            rel = self.conn.execute(sql)
+            df = rel.fetchdf()
+
         total_rows = len(df)
         
         if total_rows > max_rows:

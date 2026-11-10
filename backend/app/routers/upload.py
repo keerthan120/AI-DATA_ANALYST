@@ -16,6 +16,7 @@ router = APIRouter(prefix="/api", tags=["Data Ingestion & Schemas"])
 async def upload_csv_files(
     files: list[UploadFile] = File(...),
     conversation_id: Optional[str] = Form(None),
+    user_id: Optional[int] = Form(None),
     db: Session = Depends(get_db)
 ):
     """
@@ -61,11 +62,14 @@ async def upload_csv_files(
             conv = Conversation(
                 id=conversation_id,
                 title=f"Analysis of {new_names[0]}" if new_names else "New Analysis",
+                user_id=user_id,
                 active_tables=json.dumps(new_names)
             )
             db.add(conv)
             db.commit()
         else:
+            if user_id and not conv.user_id:
+                conv.user_id = user_id
             existing = conv.get_tables_list()
             new_tables = list(dict.fromkeys(existing + new_names))
             conv.set_tables_list(new_tables)
@@ -81,7 +85,7 @@ async def upload_csv_files(
 async def list_tables(conversation_id: Optional[str] = None, db: Session = Depends(get_db)):
     """
     Returns profiles and preview rows for registered tables.
-    If conversation_id is provided, filters tables scoped to that conversation.
+    If conversation_id is provided, STRICTLY filters tables scoped to that conversation.
     """
     db_engine.auto_register_uploads()
     all_tables = db_engine.get_registered_tables_info()
@@ -89,9 +93,8 @@ async def list_tables(conversation_id: Optional[str] = None, db: Session = Depen
         conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
         if conv:
             allowed = set(conv.get_tables_list())
-            matched = [t for t in all_tables if t.table_name in allowed]
-            if matched:
-                return matched
+            return [t for t in all_tables if t.table_name in allowed]
+        return []
     return all_tables
 
 @router.post("/load-samples", response_model=UploadResponse)
